@@ -17,7 +17,8 @@ class AndroidBridge(
   private val onNotify: (title: String, text: String) -> Unit,
   private val onAllFilesAccessRequest: () -> Unit = {},
   private val onDebugLogsRequest: () -> Unit = {},
-  private val onGetSystemDark: () -> Boolean = { false },
+private val onGetSystemDark: () -> Boolean = { false },
+  private val onPickImageRequest: (callbackId: String) -> Unit = {},
   private val pickToken: String? = null,
   private val onRestartEngine: () -> Unit = {},
   private val onReloadWebUI: () -> Unit = {},
@@ -50,6 +51,11 @@ class AndroidBridge(
   @JavascriptInterface
   fun pickDirectory(callbackId: String) {
     onPickRequest(callbackId)
+  }
+
+  @JavascriptInterface
+  fun pickImage(callbackId: String) {
+    onPickImageRequest(callbackId)
   }
 
   /** 调试日志导出：引擎日志 + 环境信息打包 zip（走会话导出同款下载/弹窗链路）。 */
