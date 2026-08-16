@@ -39,8 +39,8 @@ jobs:
           java-version: '17'
       - name: 确保 Android SDK platform 36
         run: |
-          set +e
-          sudo "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1
-          exit 0
+          yes | sudo "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
       - name: 编译 debug Kotlin（compileDebugKotlin，不依赖快照资产）
-        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
