@@ -3,6 +3,8 @@ package com.dshmobile.shell
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -208,6 +210,22 @@ class MainActivity : ComponentActivity() {
     imagePickerBridge.launch(Unit)
   }
 
+  /**
+   * 原生剪贴板写入（WebView 的 Clipboard API 在 Android 上被拒
+   * NotAllowedError: Write permission denied，页面回退到本桥）。
+   */
+  private fun copyTextNative(text: String): Boolean {
+    return try {
+      val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      cm.setPrimaryClip(ClipData.newPlainText("dsh", text))
+      Log.i("dsh-image", "copyTextNative ok, len=" + text.length)
+      true
+    } catch (e: Exception) {
+      Log.e("dsh-image", "copyTextNative failed: " + e.message)
+      false
+    }
+  }
+
   /** 从 content Uri 读取显示名（MediaStore DISPLAY_NAME）。 */
   private fun queryImageName(uri: Uri): String? {
     return try {
@@ -409,12 +427,13 @@ class MainActivity : ComponentActivity() {
         onNotify = { title, text -> showTestNotification(title, text) },
         onAllFilesAccessRequest = { openAllFilesAccessSettings() },
         onDebugLogsRequest = { downloadDebugLogs() },
-onGetSystemDark = {
+        onGetSystemDark = {
           (resources.configuration.uiMode and
             android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES
         },
         onPickImageRequest = { callbackId -> pickImageForBridge(callbackId) },
+        onCopyTextRequest = { text -> copyTextNative(text) },
         pickToken = pickToken,
         onRestartEngine = { restartEngine() },
         onReloadWebUI = {
