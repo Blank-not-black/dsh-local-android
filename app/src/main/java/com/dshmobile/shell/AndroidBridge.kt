@@ -19,6 +19,7 @@ class AndroidBridge(
   private val onDebugLogsRequest: () -> Unit = {},
   private val onGetSystemDark: () -> Boolean = { false },
   private val onPickImageRequest: (callbackId: String) -> Unit = {},
+  private val onSetTextZoomRequest: (percent: Int) -> Unit = {},
   private val onCopyTextRequest: (text: String) -> Boolean = { false },
   private val pickToken: String? = null,
   private val onRestartEngine: () -> Unit = {},
@@ -57,6 +58,12 @@ class AndroidBridge(
   @JavascriptInterface
   fun pickImage(callbackId: String) {
     onPickImageRequest(callbackId)
+  }
+
+  /** 设置 WebView 字体缩放（textZoom，50–200）；设置 → 通用设置 滑块调用。 */
+  @JavascriptInterface
+  fun setTextZoom(percent: Int) {
+    onSetTextZoomRequest(percent)
   }
 
   /**

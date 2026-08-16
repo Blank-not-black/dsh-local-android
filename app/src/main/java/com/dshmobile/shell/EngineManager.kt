@@ -347,6 +347,8 @@ class EngineManager(private val context: Context, private val pickToken: String?
     val home = File(homeDir, ".dsh")
     applyAssetPatch("patched/client-ui-conversation-client.js",
       File(dshPkgs, "dsh-client-ui-conversation/lib/client.js"), "onImagePicked")
+    applyAssetPatch("patched/settings-general-client.js",
+      File(dshPkgs, "dsh-client-ui-settings-general/lib/client.js"), "dsh-mobile-textzoom")
     applyAssetPatch("patched/primitives-index.js",
       File(dshPkgs, "dsh-client-ui-primitives/lib/index.js"), "dsh-mobile-clip-fallback")
     applyAssetPatch("patched/attachment-local-index.js",
