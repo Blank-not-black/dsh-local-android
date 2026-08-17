@@ -14,8 +14,8 @@ android {
     // (the embedded engine, bash, and every child command would need linker64
     // wrappers); 34 keeps native exec working on Android 15/16 devices.
     targetSdk = 34
-    versionCode = 11
-    versionName = "0.11.1"
+    versionCode = 12
+    versionName = "0.11.2"
   }
 
   androidResources {
@@ -61,8 +61,8 @@ tasks.whenTaskAdded {
 }
 
 dependencies {
-  implementation("androidx.activity:activity-ktx:1.9.3")
-  implementation("org.apache.commons:commons-compress:1.27.1")
+  implementation("androidx.activity:activity-ktx:1.10.1")
+  implementation("org.apache.commons:commons-compress:1.28.0")
   implementation("org.tukaani:xz:1.10")
   implementation("dev.rikka.shizuku:api:13.1.5")
   implementation("dev.rikka.shizuku:provider:13.1.5")
