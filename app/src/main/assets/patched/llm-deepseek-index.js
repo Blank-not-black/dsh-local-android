@@ -129,7 +129,7 @@ async function describeImage(mediaType, data, signal) {
 */
 /** Validate the adapter-owned effort before resolving its DeepSeek wire fields. */
 function reasoningEffort(effort) {
-	if (effort === "off" || effort === "high" || effort === "max") return effort;
+	if (effort === "off" || effort === "low" || effort === "high" || effort === "max") return effort;
 	throw new LlmError(`DeepSeek does not support reasoning effort "${effort}"`, "UNSUPPORTED_REASONING_EFFORT");
 }
 /** Resolve one legal thinking/effort pair without exposing `off` as a wire effort. */
@@ -138,7 +138,7 @@ function resolveThinking(options, defaults) {
 	const effort = options.reasoningEffort === void 0 ? defaults.reasoningEffort : reasoningEffort(options.reasoningEffort);
 	if (defaults.thinking === "disabled" && effort !== void 0 && effort !== "off") throw new LlmError(`DeepSeek deployment does not support reasoning effort "${effort}"`, "UNSUPPORTED_REASONING_EFFORT");
 	if (effort === "off") return { thinking: "disabled" };
-	if (effort === "high" || effort === "max") return {
+	if (effort === "low" || effort === "high" || effort === "max") return {
 		thinking: "enabled",
 		reasoningEffort: effort
 	};
@@ -525,12 +525,17 @@ const DEFAULT_CONTEXT_WINDOW = 1e6;
 const DEFAULT_MAX_TOKENS = 256e3;
 const STREAM_IDLE_TIMEOUT_CODE = "LLM_STREAM_IDLE_TIMEOUT";
 const OFF_REASONING_EFFORT = ReasoningEffortId("off");
+const LOW_REASONING_EFFORT = ReasoningEffortId("low");
 const HIGH_REASONING_EFFORT = ReasoningEffortId("high");
 const MAX_REASONING_EFFORT = ReasoningEffortId("max");
 const REASONING_EFFORTS = [
 	{
 		id: OFF_REASONING_EFFORT,
 		name: "Off"
+	},
+	{
+		id: LOW_REASONING_EFFORT,
+		name: "Low"
 	},
 	{
 		id: HIGH_REASONING_EFFORT,
@@ -644,7 +649,7 @@ var DeepSeekAdapter = class extends LlmAdapter {
 				defaultEffort: OFF_REASONING_EFFORT
 			} } : { reasoning: {
 				efforts: REASONING_EFFORTS,
-				defaultEffort: connection.defaults.reasoningEffort === "off" ? OFF_REASONING_EFFORT : connection.defaults.reasoningEffort === "max" ? MAX_REASONING_EFFORT : HIGH_REASONING_EFFORT
+				defaultEffort: connection.defaults.reasoningEffort === "off" ? OFF_REASONING_EFFORT : connection.defaults.reasoningEffort === "low" ? LOW_REASONING_EFFORT : connection.defaults.reasoningEffort === "max" ? MAX_REASONING_EFFORT : HIGH_REASONING_EFFORT
 			} }
 		});
 	}
@@ -777,6 +782,7 @@ const Config = z.object({
 	thinking: z.union(["enabled", "disabled"]),
 	reasoningEffort: z.union([
 		"off",
+		"low",
 		"high",
 		"max"
 	]),

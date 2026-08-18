@@ -1744,6 +1744,34 @@ function useAnchoredMaxHeight(ref, cap, signal) {
 	return maxHeight;
 }
 //#endregion
+//#region lib/types/useDismissOnOutsidePointer.js
+/**
+* Outside-pointer dismissal for trigger-owned popovers (jobs list, Cordis
+* panel): while the surface is open, a pointerdown outside the root closes it.
+*/
+/**
+* Close an open popover when a pointerdown lands outside its root element.
+* @param root - element containing both the trigger and the open surface.
+* @param open - whether the surface is showing; false detaches the listener.
+* @param setOpen - state setter invoked with false on an outside pointerdown.
+*/
+function useDismissOnOutsidePointer(root, open, setOpen) {
+	useEffect(() => {
+		if (!open) return;
+		const closeOutside = (event) => {
+			if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
+		};
+		document.addEventListener("pointerdown", closeOutside);
+		return () => {
+			document.removeEventListener("pointerdown", closeOutside);
+		};
+	}, [
+		root,
+		open,
+		setOpen
+	]);
+}
+//#endregion
 //#region lib/types/clipboard.js
 /**
 * Write text to the host clipboard, preferring the async Clipboard API and
@@ -5865,4 +5893,4 @@ function extractMarkdownPlainText(markdown, options = {}) {
 	}
 }
 //#endregion
-export { BrandWordmark, Button, CodeBlock, ConnectionBanner, DEFAULT_DIFF_MAX_LINES, DEFAULT_READ_MAX_LINES, DEFAULT_SEARCH_MAX_LINES, DEFAULT_TERMINAL_MAX_LINES, DiffBlock, DisclosureRow, FishLogo, HoverCard, IconAgentPresetOutline16, IconApiOutline14, IconArchiveOutline20, IconBranchOutline16, IconBrowseOutline16, IconCheckOutline14, IconCheckOutline16, IconChecklistOutline14, IconChevronDownOutline14, IconChevronLeftOutline14, IconChevronRightOutline14, IconChevronUpOutline14, IconCloseFill14, IconCloseOutline16, IconCodeOutline16, IconCopyOutline16, IconCordisPluginOutline14, IconDarkOutline16, IconDataOutline16, IconDislikeFill16, IconDislikeOutline16, IconDownloadOutline16, IconEditOutline16, IconEllipsisOutline16, IconEnhanceOutline16, IconFolderClose16, IconFolderOpen16, IconFolderOpenOutline16, IconFollowsystemOutline16, IconFullscreenOutline16, IconGlobeOutline14, IconGoalOutline16, IconInspectOutline12, IconLightOutline16, IconLikeFill16, IconLikeOutline16, IconLinkOutline14, IconLinkOutline16, IconListPenOutline16, IconLoadingOutline16, IconNewChatOutline16, IconPanelLeftOutline16, IconPaperclipOutline16, IconPauseOutline16, IconPersonalizationOutline16, IconPlayOutline16, IconPlusOutline16, IconProjectAddOutline16, IconQuestionOutline14, IconQueueOutline14, IconRefreshOutline14, IconRefreshOutline16, IconRightUpOutline14, IconRightUpOutline16, IconSearchOutline16, IconSendOutline14, IconSendOutline16, IconSettingsOutline14, IconSettingsOutline16, IconShareOutline16, IconSkillOutline16, IconSparkle16, IconStopFill16, IconThinkOutline14, IconThinkOutline16, IconTrashOutline16, IconTreeCorner8x10, IconTriangleRightFill14, IconUserOutline16, IconWarningOutline16, Input, JsonBlock, JsonTree, MarkdownText, Menu, MessageText, Modal, OnboardingSurface, Pill, ReadBlock, RiskConfirmation, SearchBlock, StateDot, TerminalBlock, Toast, Tooltip, WebBlock, extractMarkdownPlainText, useAnchoredMaxHeight, writeClipboard };
+export { BrandWordmark, Button, CodeBlock, ConnectionBanner, DEFAULT_DIFF_MAX_LINES, DEFAULT_READ_MAX_LINES, DEFAULT_SEARCH_MAX_LINES, DEFAULT_TERMINAL_MAX_LINES, DiffBlock, DisclosureRow, FishLogo, HoverCard, IconAgentPresetOutline16, IconApiOutline14, IconArchiveOutline20, IconBranchOutline16, IconBrowseOutline16, IconCheckOutline14, IconCheckOutline16, IconChecklistOutline14, IconChevronDownOutline14, IconChevronLeftOutline14, IconChevronRightOutline14, IconChevronUpOutline14, IconCloseFill14, IconCloseOutline16, IconCodeOutline16, IconCopyOutline16, IconCordisPluginOutline14, IconDarkOutline16, IconDataOutline16, IconDislikeFill16, IconDislikeOutline16, IconDownloadOutline16, IconEditOutline16, IconEllipsisOutline16, IconEnhanceOutline16, IconFolderClose16, IconFolderOpen16, IconFolderOpenOutline16, IconFollowsystemOutline16, IconFullscreenOutline16, IconGlobeOutline14, IconGoalOutline16, IconInspectOutline12, IconLightOutline16, IconLikeFill16, IconLikeOutline16, IconLinkOutline14, IconLinkOutline16, IconListPenOutline16, IconLoadingOutline16, IconNewChatOutline16, IconPanelLeftOutline16, IconPaperclipOutline16, IconPauseOutline16, IconPersonalizationOutline16, IconPlayOutline16, IconPlusOutline16, IconProjectAddOutline16, IconQuestionOutline14, IconQueueOutline14, IconRefreshOutline14, IconRefreshOutline16, IconRightUpOutline14, IconRightUpOutline16, IconSearchOutline16, IconSendOutline14, IconSendOutline16, IconSettingsOutline14, IconSettingsOutline16, IconShareOutline16, IconSkillOutline16, IconSparkle16, IconStopFill16, IconThinkOutline14, IconThinkOutline16, IconTrashOutline16, IconTreeCorner8x10, IconTriangleRightFill14, IconUserOutline16, IconWarningOutline16, Input, JsonBlock, JsonTree, MarkdownText, Menu, MessageText, Modal, OnboardingSurface, Pill, ReadBlock, RiskConfirmation, SearchBlock, StateDot, TerminalBlock, Toast, Tooltip, WebBlock, extractMarkdownPlainText, useAnchoredMaxHeight, useDismissOnOutsidePointer, writeClipboard };
