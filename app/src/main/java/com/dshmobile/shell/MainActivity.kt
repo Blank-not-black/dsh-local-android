@@ -80,6 +80,59 @@ class MainActivity : ComponentActivity() {
       }.start()
     }
   }
+  // —— WebView 渲染进程冻结看门狗（2026-08-18，issue #36：荣耀 MagicUI 6.1 /
+  // Android 12 仍卡「Loading plugins…」且页面无诊断层 = 渲染进程 JS 主线程冻结，
+  // 页面内看门狗定时器也跑不动）。evaluateJavascript 的 JS 在渲染进程执行，App
+  // 主线程不受影响：主线程周期发 JS 心跳，回调不再返回即判渲染进程失活 →
+  // Toast 提示 + 自动 reload 一次 + 记日志。 ——
+  private val freezeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private var jsAckAt = System.currentTimeMillis()
+  private var pageLoadedAt = System.currentTimeMillis()
+  private var pingOutstanding = false
+  private var freezeReloaded = false
+  private val freezeRunnable = object : Runnable {
+    override fun run() {
+      if (!::webView.isInitialized) return
+      val now = System.currentTimeMillis()
+      if (now - pageLoadedAt > 45_000 && now - jsAckAt > 20_000) {
+        LogCollector.log("dsh-shell", "webview JS 无响应，渲染进程冻结（frozenMs=" + (now - jsAckAt) + "）")
+        try {
+          android.widget.Toast.makeText(
+            this@MainActivity, "页面无响应，正在自动刷新…", android.widget.Toast.LENGTH_LONG,
+          ).show()
+        } catch (_: Exception) {
+        }
+        if (!freezeReloaded) {
+          freezeReloaded = true
+          try { webView.reload() } catch (_: Exception) {
+          }
+        }
+        jsAckAt = now
+        pingOutstanding = false
+      } else if (!pingOutstanding) {
+        pingOutstanding = true
+        try {
+          webView.evaluateJavascript("1") { _ ->
+            jsAckAt = System.currentTimeMillis()
+            pingOutstanding = false
+          }
+        } catch (_: Exception) {
+          pingOutstanding = false
+        }
+      }
+      freezeHandler.postDelayed(this, 10_000)
+    }
+  }
+
+  private fun startFreezeWatchdog() {
+    val now = System.currentTimeMillis()
+    pageLoadedAt = now
+    jsAckAt = now
+    pingOutstanding = false
+    if (freezeHandler.hasCallbacks(freezeRunnable)) freezeHandler.removeCallbacks(freezeRunnable)
+    freezeHandler.postDelayed(freezeRunnable, 10_000)
+  }
+
   private val engineManager by lazy { EngineManager(this, pickToken) }
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   private var pendingPickCallback: String? = null
@@ -427,6 +480,9 @@ class MainActivity : ComponentActivity() {
       domStorageEnabled = true
       allowFileAccess = false
       mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+      // 禁用 HTTP 缓存：杜绝 WebView 命中旧 index/旧 bundle 造成"卡 loading 且
+      // 无诊断层"（缓存页里没有页面看门狗；荣耀/MagicUI 实测类问题）。
+      cacheMode = WebSettings.LOAD_NO_CACHE
       // 字体大小（设置 → 通用设置）：从本地持久化恢复，不依赖页面缓存。
       textZoom = textZoomPrefs().coerceIn(50, 200)
       // prefers-color-scheme 跟随系统深色（某些厂商 WebView 默认不跟随；
@@ -464,6 +520,7 @@ class MainActivity : ComponentActivity() {
       override fun onPageFinished(view: WebView, url: String) {
         super.onPageFinished(view, url)
         pushSystemDark(view)
+        if (isEngineSource(url)) startFreezeWatchdog()
       }
     }
     // WebView 下载：会话日志导出（/api/session.export）与其余引擎源下载
