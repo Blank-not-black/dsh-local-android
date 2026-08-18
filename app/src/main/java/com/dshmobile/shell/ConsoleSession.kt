@@ -35,12 +35,30 @@ class ConsoleSession(private val context: Context) {
       listener.onStatus("快照缺失（usr/bin/bash 不存在），无法打开控制台")
       return false
     }
+    // 可执行位兜底：个别设备/文件系统解压后可能丢失 exec 位（execve → EACCES，
+    // 报"Permission denied"）。tar 内模式理论上保留，这里幂等加固。
+    try {
+      bash.setExecutable(true, false)
+    } catch (t: Throwable) {
+      Log.w(TAG, "bash setExecutable failed: " + (t.message ?: t.javaClass.simpleName))
+    }
     return try {
-      val pb = ProcessBuilder(bash.absolutePath, "-i")
-      pb.environment().putAll(engineManager.shellEnv())
-      pb.environment()["PS1"] = "dsh:\\w$ "
-      pb.redirectErrorStream(true)
-      val proc = pb.start()
+      fun build(argv: List<String>): ProcessBuilder =
+        ProcessBuilder(argv).also { p ->
+          p.environment().putAll(engineManager.shellEnv())
+          p.environment()["PS1"] = "dsh:\\w$ "
+          p.redirectErrorStream(true)
+        }
+      val argv = listOf(bash.absolutePath, "-i")
+      // 与引擎同款回退：Android 15/16 及部分厂商系统（荣耀/华为实测）禁止 app 域
+      // 直接 exec app-data ELF（EACCES Permission denied），经 /system/bin/linker64
+      // 加载机制与 Android 系统库一致，始终允许。
+      val proc = try {
+        build(argv).start()
+      } catch (e: java.io.IOException) {
+        Log.w(TAG, "console: direct exec denied, falling back to linker64: " + e.message)
+        build(listOf("/system/bin/linker64") + argv).start()
+      }
       process = proc
       val reader = Thread {
         try {
@@ -83,6 +101,7 @@ class ConsoleSession(private val context: Context) {
       listener.onStatus("bash 已启动（快照 Termux 环境）")
       true
     } catch (t: Throwable) {
+      LogCollector.log(TAG, "console start FAILED: " + (t.message ?: t.javaClass.simpleName))
       listener.onStatus("控制台启动失败：" + (t.message ?: t.javaClass.simpleName))
       false
     }
