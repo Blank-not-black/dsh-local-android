@@ -14,8 +14,8 @@ android {
     // (the embedded engine, bash, and every child command would need linker64
     // wrappers); 34 keeps native exec working on Android 15/16 devices.
     targetSdk = 34
-    versionCode = 14
-    versionName = "0.12.0"
+    versionCode = 15
+    versionName = "0.12.1"
   }
 
   androidResources {

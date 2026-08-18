@@ -24,6 +24,7 @@ class AndroidBridge(
   private val onCopyTextRequest: (text: String) -> Boolean = { false },
   private val pickToken: String? = null,
   private val onRestartEngine: () -> Unit = {},
+  private val onShutdownToGuide: () -> Unit = {},
   private val onReloadWebUI: () -> Unit = {},
   private val onOpenConsole: () -> Unit = {},
   private val onGetDevLogEnabled: () -> Boolean = { false },
@@ -109,6 +110,12 @@ class AndroidBridge(
   @JavascriptInterface
   fun restartEngine() {
     onRestartEngine()
+  }
+
+  /** 关闭 harness：停止引擎并回退到初始化（启动/测试）界面（不自动重启）。 */
+  @JavascriptInterface
+  fun shutdownToGuide() {
+    onShutdownToGuide()
   }
 
   /** 刷新 Web UI（重载当前引擎页面，issue apk#29 需求 1）。 */

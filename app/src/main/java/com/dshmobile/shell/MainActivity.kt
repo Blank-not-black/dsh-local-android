@@ -579,6 +579,7 @@ class MainActivity : ComponentActivity() {
         onCopyTextRequest = { text -> copyTextNative(text) },
         pickToken = pickToken,
         onRestartEngine = { restartEngine() },
+        onShutdownToGuide = { shutdownToGuide() },
         onReloadWebUI = {
           webView.reload()
           showTestNotification("界面已刷新", "Web UI 已重新加载")
@@ -1072,10 +1073,6 @@ class MainActivity : ComponentActivity() {
       text = "重试"
       setOnClickListener { startEngineFlow() }
     }
-    val openTermux = Button(this).apply {
-      text = "打开 Termux"
-      setOnClickListener { launchTermux() }
-    }
     val update = Button(this).apply {
       text = "检查运行时更新"
       setOnClickListener {
@@ -1106,14 +1103,19 @@ class MainActivity : ComponentActivity() {
     guide.addView(progressBar)
     guide.addView(progressText)
     guide.addView(logSummary)
-    guide.addView(buttonRow(openConsole, retry))
-    guide.addView(buttonRow(openTermux, update))
+    guide.addView(buttonRow(openConsole, retry, update))
     return guide
   }
 
-  private fun launchTermux() {
-    val intent = packageManager.getLaunchIntentForPackage("com.termux")
-    if (intent != null) startActivity(intent)
+  /** 开发者选项「关闭」：停止引擎并回退到初始化（启动/测试）界面，不自动重启。 */
+  private fun shutdownToGuide() {
+    EngineService.userShutdown = true
+    try { EngineService.instance?.requestShutdown() } catch (_: Exception) {
+    }
+    try { engineManager.stopEngine() } catch (_: Exception) {
+    }
+    showGuide()
+    LogCollector.log("dsh-shell", "harness closed via dev options (shutdownToGuide)")
   }
 
   /**
