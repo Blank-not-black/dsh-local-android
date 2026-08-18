@@ -1,5 +1,7 @@
 # dsh-mobile-apk — DeepSeek Harness Android Shell APK
 
+[🌐 中文说明 / 中文 README](README.zh.md)
+
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-blue?style=flat&logo=DeepSeek&logoSize=auto&color=%232D5F9E)
 ![Android](https://img.shields.io/badge/Android-blue?style=flat&logo=Android&logoSize=auto&color=%2397CA00)
 
