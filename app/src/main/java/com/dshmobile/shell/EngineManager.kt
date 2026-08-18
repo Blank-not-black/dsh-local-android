@@ -338,7 +338,6 @@ class EngineManager(private val context: Context, private val pickToken: String?
    *  - attachment-local：Android link(2) 被 sepolicy 拦截 → copyFile 回退 + EACCES 容忍
    *  - llm-deepseek：视觉桥接（上传图片 → Qwen-VL 文字描述再喂 DeepSeek）
    *  - web-frontend index.html：AbortSignal.any polyfill（华为 WebView Chromium 114 缺失）
-   *  - vision-mcp server.mjs + web profile cordis.patch.yml：读图 MCP 挂载
    * 每项以目标文件内是否存在标记串判断是否已应用（快照刷新/重解压后自动重打）。
    */
   private fun applyRuntimePatches() {
@@ -359,10 +358,6 @@ class EngineManager(private val context: Context, private val pickToken: String?
       File(webDist, "index.html"), "dsh-mobile-clip-fallback-web")
     applyAssetPatch("patched/dsh-client-modules-index.js",
       File(dshPkgs, "dsh-client-modules/lib/index.js"), "dsh-mobile-bundle-hardening")
-    applyAssetPatch("patched/vision-mcp-server.mjs",
-      File(homeDir, "vision-mcp/server.mjs"), "Qwen-VL")
-    applyAssetPatchAppend("patched/cordis.patch.yml",
-      File(home, "profiles/web/cordis.patch.yml"), "mcp-vision")
   }
 
   /** 覆盖式补丁：目标已含标记串则跳过。 */
