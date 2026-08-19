@@ -32,7 +32,7 @@ class AndroidBridge(
 ) {
 
   @JavascriptInterface
-  fun version(): String = "1.0"
+  fun version(): String = BuildConfig.VERSION_NAME
 
   /** 系统深色状态同步查询（H1：首帧主题桥启动时拉取真实 uiMode，
    *  绕过厂商 WebView matchMedia 卡 light 的问题）。 */
