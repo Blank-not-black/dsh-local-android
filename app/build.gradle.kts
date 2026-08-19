@@ -16,6 +16,11 @@ android {
     targetSdk = 34
     versionCode = 17
     versionName = "0.12.3-FX-1"
+    buildConfigField("String", "TERMUX_VERSION", "\"0.118.3\"")
+  }
+
+  buildFeatures {
+    buildConfig = true
   }
 
   androidResources {

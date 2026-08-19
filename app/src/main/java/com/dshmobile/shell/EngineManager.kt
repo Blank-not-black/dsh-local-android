@@ -499,7 +499,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
       "TERMUX__PREFIX" to usrDir.absolutePath,
       "TERMUX_APP__DATA_DIR" to context.filesDir.parentFile.absolutePath,
       "TERMUX_APP__LEGACY_DATA_DIR" to "/data/data/com.dsharnessmobile.shell",
-      "TERMUX_VERSION" to "0.118.3",
+      "TERMUX_VERSION" to BuildConfig.TERMUX_VERSION,
       // 目录选择桥端点鉴权 token（web-compat 插件校验 x-dsh-pick-token）。
       "DSH_PICK_TOKEN" to (pickToken ?: ""),
       // 视觉后端（Qwen-VL）API key：从私有文件读取，避免硬编码进源码。
