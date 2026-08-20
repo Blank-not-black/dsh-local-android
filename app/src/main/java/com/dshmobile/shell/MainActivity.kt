@@ -1110,92 +1110,174 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun buildGuideView(): LinearLayout {
-    val density = resources.displayMetrics.density
-    val pad = (24 * density).toInt()
-    val guide = LinearLayout(this).apply {
+    val ctx = this
+    fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+    fun sp(v: Float) = v * resources.displayMetrics.scaledDensity
+
+    val guide = LinearLayout(ctx).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(pad, pad, pad, pad)
+      setPadding(dp(24f), dp(24f), dp(24f), dp(24f))
       gravity = android.view.Gravity.CENTER
       visibility = View.GONE
     }
-    // logo + 标题：启动/测试双态界面的固定头部。
-    val icon = ImageView(this).apply {
+
+    // 1. 品牌区(顶部,克制)
+    val brandRow = LinearLayout(ctx).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = android.view.Gravity.CENTER
+      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+      lp.setMargins(0, 0, 0, dp(40f))
+      layoutParams = lp
+    }
+    val icon = ImageView(ctx).apply {
       setImageResource(R.mipmap.ic_launcher)
-      layoutParams = LinearLayout.LayoutParams((64 * density).toInt(), (64 * density).toInt())
-    }
-    val title = TextView(this).apply {
-      text = "DeepCode"
-      textSize = 20f
-      setPadding(0, (12 * density).toInt(), 0, (4 * density).toInt())
-      gravity = android.view.Gravity.CENTER
-    }
-    // 上次异常退出横幅（崩溃标记存在时显示）。
-    crashBanner = TextView(this).apply {
-      textSize = 12f
-      setTextColor(0xFFF85149.toInt())
-      setPadding(0, (6 * density).toInt(), 0, (10 * density).toInt())
-      gravity = android.view.Gravity.CENTER
-      visibility = View.GONE
-    }
-    engineStatus = TextView(this).apply { textSize = 16f; setPadding(0, 0, 0, pad); gravity = android.view.Gravity.CENTER }
-    // 解压/更新进度条（仅快照刷新时可见）。
-    progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-      visibility = View.GONE
       layoutParams = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT, (6 * density).toInt(),
+        resources.getDimensionPixelSize(R.dimen.ds_logo_size),
+        resources.getDimensionPixelSize(R.dimen.ds_logo_size),
       )
     }
-    progressText = TextView(this).apply {
-      textSize = 13f
-      setPadding(0, (8 * density).toInt(), 0, pad)
+    val title = TextView(ctx).apply {
+      text = "DeepCode"
+      textSize = sp(20f)
+      setTextColor(getColor(R.color.ds_text_primary))
+      setPadding(dp(10f), 0, 0, 0)
+      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+      gravity = android.view.Gravity.CENTER_VERTICAL
+    }
+    brandRow.addView(icon)
+    brandRow.addView(title)
+    guide.addView(brandRow)
+
+    // 2. 状态卡(surface 卡片,圆角 16)
+    val card = LinearLayout(ctx).apply {
+      orientation = LinearLayout.VERTICAL
+      elevation = dp(1f)
+      setPadding(
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+      )
+      val lp = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+      )
+      lp.setMargins(0, 0, 0, resources.getDimensionPixelSize(R.dimen.ds_space_24))
+      layoutParams = lp
+    }
+    card.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+    card.clipToOutline = true
+    card.background = android.graphics.drawable.GradientDrawable().apply {
+      setColor(getColor(R.color.ds_surface))
+      cornerRadius = resources.getDimension(R.dimen.ds_radius_md)
+      setStroke(dp(1f), getColor(R.color.ds_border))
+    }
+
+    engineStatus = TextView(ctx).apply {
+      textSize = sp(16f)
+      setTextColor(getColor(R.color.ds_text_primary))
+      gravity = android.view.Gravity.CENTER
+      setPadding(0, 0, 0, dp(16f))
+    }
+
+    // 崩溃警示条
+    crashBanner = TextView(ctx).apply {
+      textSize = sp(12f)
+      setTextColor(getColor(R.color.ds_danger))
+      setPadding(0, dp(6f), 0, dp(10f))
       gravity = android.view.Gravity.CENTER
       visibility = View.GONE
     }
-    // 失败诊断：engine.log 尾部摘要（测试界面排查用）。
-    logSummary = TextView(this).apply {
-      textSize = 11f
-      setPadding(0, 0, 0, pad)
+
+    progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+      visibility = View.GONE
+      progressDrawable = android.graphics.drawable.ClipDrawable(
+        android.graphics.drawable.GradientDrawable().apply {
+          setColor(getColor(R.color.ds_accent))
+          cornerRadius = resources.getDimension(R.dimen.ds_radius_full)
+        },
+        android.view.Gravity.START, android.graphics.drawable.ClipDrawable.HORIZONTAL,
+      )
+      progressBackgroundTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.ds_progress_track))
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, resources.getDimensionPixelSize(R.dimen.ds_progress_height),
+      )
+    }
+
+    progressText = TextView(ctx).apply {
+      textSize = sp(13f)
+      setTextColor(getColor(R.color.ds_text_secondary))
+      setPadding(0, dp(8f), 0, dp(16f))
       gravity = android.view.Gravity.CENTER
       visibility = View.GONE
     }
-    val openConsole = Button(this).apply {
-      text = "打开控制台"
-      setOnClickListener { startActivity(Intent(this@MainActivity, ConsoleActivity::class.java)) }
+
+    logSummary = TextView(ctx).apply {
+      textSize = sp(11f)
+      setTextColor(getColor(R.color.ds_text_tertiary))
+      setPadding(0, dp(16f), 0, 0)
+      gravity = android.view.Gravity.CENTER
+      typeface = android.graphics.Typeface.MONOSPACE
+      visibility = View.GONE
     }
-    val retry = Button(this).apply {
-      text = "重试"
-      setOnClickListener { startEngineFlow() }
-    }
-    val update = Button(this).apply {
-      text = "检查运行时更新"
-      setOnClickListener {
-        UpdateManager(this@MainActivity).checkAndApply { status ->
-          runOnUiThread { engineStatus.text = status }
+
+    card.addView(engineStatus)
+    card.addView(crashBanner)
+    card.addView(progressBar)
+    card.addView(progressText)
+    card.addView(logSummary)
+    guide.addView(card)
+
+    // 3. 操作区(底部):主按钮实心 teal,次按钮幽灵
+    fun makeButton(text: String, filled: Boolean, onClick: () -> Unit): Button {
+      return Button(ctx).apply {
+        this.text = text
+        isAllCaps = false
+        textSize = sp(14f)
+        stateListAnimator = null
+        if (filled) {
+          setTextColor(getColor(R.color.ds_surface))
+          background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(getColor(R.color.ds_accent))
+            cornerRadius = resources.getDimension(R.dimen.ds_radius_sm)
+          }
+        } else {
+          setTextColor(getColor(R.color.ds_text_primary))
+          background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(android.graphics.Color.TRANSPARENT)
+            cornerRadius = resources.getDimension(R.dimen.ds_radius_sm)
+            setStroke(dp(1f), getColor(R.color.ds_border))
+          }
+        }
+        setOnClickListener {
+          animate().scaleX(0.97f).scaleY(0.97f).setDuration(80).withEndAction {
+            animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+            onClick()
+          }.start()
         }
       }
     }
     fun buttonRow(vararg buttons: Button): LinearLayout {
-      val row = LinearLayout(this).apply {
+      val row = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = android.view.Gravity.CENTER
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.setMargins(0, 0, 0, (10 * density).toInt())
-        layoutParams = lp
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
       }
       for (b in buttons) {
-        val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        blp.setMargins((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+        val blp = LinearLayout.LayoutParams(0, dp(48f), 1f)
+        blp.setMargins(dp(6f), 0, dp(6f), 0)
         row.addView(b, blp)
       }
       return row
     }
-    guide.addView(icon)
-    guide.addView(title)
-    guide.addView(crashBanner)
-    guide.addView(engineStatus)
-    guide.addView(progressBar)
-    guide.addView(progressText)
-    guide.addView(logSummary)
+    val retry = makeButton("重试", filled = true) { startEngineFlow() }
+    val openConsole = makeButton("打开控制台", filled = false) {
+      startActivity(Intent(this@MainActivity, ConsoleActivity::class.java))
+    }
+    val update = makeButton("检查运行时更新", filled = false) {
+      UpdateManager(this@MainActivity).checkAndApply { status ->
+        runOnUiThread { engineStatus.text = status }
+      }
+    }
     guide.addView(buttonRow(openConsole, retry, update))
     return guide
   }
