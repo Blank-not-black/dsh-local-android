@@ -7,11 +7,13 @@ import { constants } from "node:fs";
 import { chmod, copyFile, link, mkdir, open, readFile, unlink } from "node:fs/promises";
 // attachment-lazy-sharp: sharp has no android runtime; load lazily so the
 // engine boots on android (image processing degrades there).
-let sharp = null;
-try { sharp = (await import("sharp")).default } catch { /* unavailable */ }
+// NOTE: must NOT `await import("sharp")` anywhere in this module — ESM resolves
+// the whole module graph at top-level await, which pulls sharp + its wasm
+// backend (@img/sharp-wasm32 → @emnapi/runtime) during load and crashes the
+// engine. Android has no sharp runtime at all, so the image pipeline degrades
+// to IMAGE_PROCESSING_UNAVAILABLE without ever touching the sharp package.
 function requireSharp() {
-  if (!sharp) throw new AttachmentError("Image processing unavailable on this platform", "IMAGE_PROCESSING_UNAVAILABLE");
-  return sharp;
+  throw new AttachmentError("Image processing unavailable on this platform", "IMAGE_PROCESSING_UNAVAILABLE");
 }
 //#region lib/types/image.js
 /** Raster inspection: full decode at admission, header-only probe on verified reads. */
