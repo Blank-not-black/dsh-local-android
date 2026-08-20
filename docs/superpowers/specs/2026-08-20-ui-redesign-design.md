@@ -63,8 +63,8 @@
 
 ### 实现方式
 
-- 新建 `res/values/attrs` + 样式,或直接代码引用 color/dimen 资源
-- 全部改资源引用,消灭硬编码魔数
+- 保持程序化构建(不引入 XML 布局),所有颜色/尺寸引用 `R.color`/`R.dimen` 资源
+- 消灭硬编码魔数
 - 深色模式由 `values-night` 限定符自动切换,所有 TextView/按钮显式设色(修复 P0)
 
 ## 控制台 console.html 重构
