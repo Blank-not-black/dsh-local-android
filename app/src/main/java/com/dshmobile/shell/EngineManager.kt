@@ -351,20 +351,15 @@ class EngineManager(private val context: Context, private val pickToken: String?
     val dshPkgs = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai")
     val webDist = File(dshPkgs, "dsh-web-frontend/dist")
     val home = File(homeDir, ".dsh")
-    applyAssetPatch("patched/client-ui-conversation-client.js",
-      File(dshPkgs, "dsh-client-ui-conversation/lib/client.js"), "onImagePicked")
-    applyAssetPatch("patched/settings-general-client.js",
-      File(dshPkgs, "dsh-client-ui-settings-general/lib/client.js"), "dsh-mobile-textzoom")
+    // v0.12.4 (rc8) 迁移：onImagePicked/describeImage/bundle-hardening/textzoom
+    // 补丁删除——rc8 官方原生图片请求（serializeRequestWithImages）、no-cache
+    // 加固已覆盖；settings-general 重构后 textzoom 功能放弃（桥保留）。
     applyAssetPatch("patched/primitives-index.js",
       File(dshPkgs, "dsh-client-ui-primitives/lib/index.js"), "dsh-mobile-clip-fallback")
     applyAssetPatch("patched/attachment-local-index.js",
-      File(dshPkgs, "dsh-attachment-local/lib/index.js"), "COPYFILE_EXCL")
-    applyAssetPatch("patched/llm-deepseek-index.js",
-      File(dshPkgs, "dsh-llm-deepseek/lib/index.js"), "describeImage")
+      File(dshPkgs, "dsh-attachment-local/lib/index.js"), "attachment-link-eacces-fallback")
     applyAssetPatch("patched/web-frontend-index.html",
       File(webDist, "index.html"), "viewport-fit=cover")
-    applyAssetPatch("patched/dsh-client-modules-index.js",
-      File(dshPkgs, "dsh-client-modules/lib/index.js"), "dsh-mobile-bundle-hardening")
   }
 
   /** 覆盖式补丁：目标已含标记串则跳过。 */
