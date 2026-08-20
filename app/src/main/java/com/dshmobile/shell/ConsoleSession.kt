@@ -26,6 +26,7 @@ class ConsoleSession(private val context: Context) {
 
   private var process: Process? = null
   private var closed = false
+  private var generation = 0
 
   /** Start bash; on failure report the reason via listener.onStatus and return false. */
   fun start(listener: Listener): Boolean {
@@ -42,6 +43,7 @@ class ConsoleSession(private val context: Context) {
     } catch (t: Throwable) {
       Log.w(TAG, "bash setExecutable failed: " + (t.message ?: t.javaClass.simpleName))
     }
+    val gen = ++generation
     return try {
       fun build(argv: List<String>): ProcessBuilder =
         ProcessBuilder(argv).also { p ->
@@ -78,10 +80,10 @@ class ConsoleSession(private val context: Context) {
               if (c == '\n'.code || sb.length >= 4096) {
                 val chunk = sb.toString()
                 sb.setLength(0)
-                listener.onOutput(chunk)
+                if (generation == gen) listener.onOutput(chunk)
               }
             }
-            if (sb.isNotEmpty()) listener.onOutput(sb.toString())
+            if (sb.isNotEmpty() && generation == gen) listener.onOutput(sb.toString())
           }
         } catch (t: Throwable) {
           if (!closed) Log.w(TAG, "console reader ended: " + (t.message ?: t.javaClass.simpleName))
@@ -94,7 +96,7 @@ class ConsoleSession(private val context: Context) {
         } catch (_: IllegalThreadStateException) {
           -1
         }
-        listener.onExit(code)
+        if (generation == gen) listener.onExit(code)
       }
       reader.isDaemon = true
       reader.start()
@@ -116,6 +118,23 @@ class ConsoleSession(private val context: Context) {
     } catch (t: Throwable) {
       Log.w(TAG, "console write failed: " + (t.message ?: t.javaClass.simpleName))
     }
+  }
+
+  fun isAlive(): Boolean {
+    val proc = process ?: return false
+    return try {
+      proc.exitValue()
+      false
+    } catch (_: IllegalThreadStateException) {
+      true
+    }
+  }
+
+  fun restart(listener: Listener): Boolean {
+    generation += 1
+    destroy()
+    closed = false
+    return start(listener)
   }
 
   /** Terminate the session (Activity destroyed). */

@@ -25,9 +25,9 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -67,6 +67,10 @@ class MainActivity : ComponentActivity() {
   private lateinit var brandBlock: View
   private lateinit var cardBlock: View
   private lateinit var actionBlock: View
+  private lateinit var chrome: GuideChrome
+  private var statusPulse: ObjectAnimator? = null
+  private var lastGuidePhase: GuidePhase = GuidePhase.Idle
+  private val updateRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   /** 崩溃标记：记录未捕获异常摘要，下次启动测试界面提示（不吞异常）。 */
   private var crashInfo: String? = null
   /** 重启引擎 in-flight 守卫（防连点双杀双启）。 */
@@ -85,7 +89,7 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
           if (::webView.isInitialized && ::guideView.isInitialized && !userClosedEngine) {
             if (!running && webView.visibility == View.VISIBLE) {
-              engineStatus.text = "引擎未运行，正在自动恢复…"
+              applyGuidePhase(GuidePhase.Recovering, "引擎未运行，正在自动恢复…")
               showGuide()
             } else if (running && guideView.visibility == View.VISIBLE) {
               showWeb()
@@ -364,19 +368,31 @@ class MainActivity : ComponentActivity() {
     WindowCompat.setDecorFitsSystemWindows(window, false)
     applyImmersive(immersivePrefs())
     val root = FrameLayout(this)
-    webView = WebView(this).apply { id = View.generateViewId() }
+    webView = WebView(this).apply {
+      id = View.generateViewId()
+      visibility = View.GONE
+    }
     root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     guideView = buildGuideView()
     root.addView(guideView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     setContentView(root)
     ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-      val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
       val mandatoryGestures = insets.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures()).bottom
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
       val density = resources.displayMetrics.density
-      webSystemBottomInset = pxToCssPx(maxOf(systemBars, mandatoryGestures), density)
+      webSystemBottomInset = pxToCssPx(maxOf(bars.bottom, mandatoryGestures), density)
       webImeBottomInset = pxToCssPx(ime, density)
       scheduleWebInsetsPush()
+      if (::guideView.isInitialized) {
+        val gutter = resources.getDimensionPixelSize(R.dimen.ds_guide_gutter)
+        guideView.setPadding(
+          gutter,
+          gutter + bars.top,
+          gutter,
+          gutter + maxOf(bars.bottom, ime),
+        )
+      }
       insets
     }
     ViewCompat.requestApplyInsets(root)
@@ -399,6 +415,7 @@ class MainActivity : ComponentActivity() {
     // Back from the directory picker / Termux: re-route if the engine came up.
     // 仅当 WebView 未展示（引导页/首次启动）时才探测并重路由；相册/文件选择器
     // 返回时 WebView 已可见，探测超时会误触发 showWeb→reload，导致 JS 状态丢失。
+    if (::chrome.isInitialized) refreshGuideMeta()
     if (!userClosedEngine && webView.visibility != View.VISIBLE && !EngineProbe.check().optBoolean("running", false)) startEngineFlow()
     // 主题补推：从系统设置/SAF 返回时系统主题可能已变（兜底桥时序覆盖）。
     if (::webView.isInitialized) {
@@ -490,6 +507,8 @@ class MainActivity : ComponentActivity() {
     engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
     freezeHandler.removeCallbacks(freezeRunnable)
     pickTtlHandler.removeCallbacks(pickTtlRunnable)
+    statusPulse?.cancel()
+    statusPulse = null
     // 兜底释放：Activity 销毁时清掉可能仍持有的屏幕常亮锁。
     try {
       if (screenWakeLock != null) {
@@ -1114,239 +1133,158 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun buildGuideView(): LinearLayout {
-    val ctx = this
-    val dens = resources.displayMetrics.density
-    fun dp(v: Float) = (v * dens).toInt()
-    fun sp(v: Float) = v * resources.displayMetrics.scaledDensity
-    fun dim(id: Int) = resources.getDimension(id)
-    fun dpix(id: Int) = resources.getDimensionPixelSize(id)
-
-    // 背景氛围：暖灰/近黑基底 + 顶部 teal 微光（克制，非纯平铺）
-    val bgGradient = android.graphics.drawable.GradientDrawable(
-      android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-      intArrayOf(getColor(R.color.ds_glow), getColor(R.color.ds_bg), getColor(R.color.ds_bg)),
+    chrome = buildGuideChrome(
+      this,
+      GuideCallbacks(
+        onStartEngine = { startEngineFlow() },
+        onOpenConsole = { startActivity(Intent(this, ConsoleActivity::class.java)) },
+        onCheckUpdate = { startUpdateCheck() },
+        onGrantStorage = { openAllFilesAccessSettings() },
+        onCopyLog = { copyGuideLog() },
+      ),
     )
-
-    val guide = LinearLayout(ctx).apply {
-      orientation = LinearLayout.VERTICAL
-      setPadding(dp(24f), dp(24f), dp(24f), dp(24f))
-      gravity = android.view.Gravity.CENTER
-      background = bgGradient
-      visibility = View.GONE
-    }
-
-    // —— 1. 品牌区：squircle 图标容器 + 字标，克制留白 ——
-    val iconShell = FrameLayout(ctx).apply {
-      val lp = LinearLayout.LayoutParams(dpix(R.dimen.ds_logo_size) + dp(8f), dpix(R.dimen.ds_logo_size) + dp(8f))
-      layoutParams = lp
-      background = android.graphics.drawable.GradientDrawable().apply {
-        setColor(getColor(R.color.ds_accent_soft))
-        cornerRadius = dim(R.dimen.ds_radius_icon)
-        setStroke(dp(1f), getColor(R.color.ds_accent))
-      }
-    }
-    val icon = ImageView(ctx).apply {
-      setImageResource(R.mipmap.ic_launcher)
-      val lp = FrameLayout.LayoutParams(dpix(R.dimen.ds_logo_size), dpix(R.dimen.ds_logo_size), android.view.Gravity.CENTER)
-      layoutParams = lp
-    }
-    iconShell.addView(icon)
-    val title = TextView(ctx).apply {
-      text = "DeepCode"
-      textSize = sp(22f)
-      setTextColor(getColor(R.color.ds_text_primary))
-      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-      gravity = android.view.Gravity.CENTER
-      setPadding(0, dp(12f), 0, 0)
-    }
-    brandBlock = LinearLayout(ctx).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = android.view.Gravity.CENTER
-      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-      lp.setMargins(0, 0, 0, dp(48f))
-      layoutParams = lp
-    }.also { it.addView(iconShell); it.addView(title) }
-    guide.addView(brandBlock)
-
-    // —— 2. 状态卡：Double-Bezel（外层 shell + 内层 core，同心圆角） ——
-    val shell = LinearLayout(ctx).apply {
-      orientation = LinearLayout.VERTICAL
-      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-      lp.setMargins(0, 0, 0, dp(32f))
-      layoutParams = lp
-      setPadding(dp(1.5f), dp(1.5f), dp(1.5f), dp(1.5f))
-      background = android.graphics.drawable.GradientDrawable().apply {
-        setColor(getColor(R.color.ds_shell))
-        cornerRadius = dim(R.dimen.ds_radius_shell)
-        setStroke(dp(1f), getColor(R.color.ds_border))
-      }
-    }
-    val card = LinearLayout(ctx).apply {
-      orientation = LinearLayout.VERTICAL
-      setPadding(dpix(R.dimen.ds_space_24), dp(28f), dpix(R.dimen.ds_space_24), dp(28f))
-      background = android.graphics.drawable.GradientDrawable().apply {
-        setColor(getColor(R.color.ds_surface))
-        cornerRadius = dim(R.dimen.ds_radius_card)
-        setStroke(dp(1f), getColor(R.color.ds_border))
-      }
-    }
-
-    engineStatus = TextView(ctx).apply {
-      textSize = sp(17f)
-      setTextColor(getColor(R.color.ds_text_primary))
-      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-      gravity = android.view.Gravity.CENTER
-      setLineSpacing(0f, 1.15f)
-    }
-
-    crashBanner = TextView(ctx).apply {
-      textSize = sp(12f)
-      setTextColor(getColor(R.color.ds_danger))
-      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-      gravity = android.view.Gravity.CENTER
-      visibility = View.GONE
-      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-      lp.setMargins(0, dp(16f), 0, 0)
-      lp.gravity = android.view.Gravity.CENTER_HORIZONTAL
-      layoutParams = lp
-      background = android.graphics.drawable.GradientDrawable().apply {
-        setColor(getColor(R.color.ds_danger_soft))
-        cornerRadius = dim(R.dimen.ds_radius_pill)
-      }
-      setPadding(dp(14f), dp(6f), dp(14f), dp(6f))
-    }
-
-    progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
-      visibility = View.GONE
-      progressDrawable = android.graphics.drawable.ClipDrawable(
-        android.graphics.drawable.GradientDrawable().apply {
-          setColor(getColor(R.color.ds_accent))
-          cornerRadius = dim(R.dimen.ds_radius_pill)
-        },
-        android.view.Gravity.START, android.graphics.drawable.ClipDrawable.HORIZONTAL,
-      )
-      progressBackgroundTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.ds_progress_track))
-      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpix(R.dimen.ds_progress_height))
-      lp.setMargins(dp(8f), dp(24f), dp(8f), 0)
-      layoutParams = lp
-    }
-
-    progressText = TextView(ctx).apply {
-      textSize = sp(13f)
-      setTextColor(getColor(R.color.ds_text_secondary))
-      setPadding(0, dp(10f), 0, 0)
-      gravity = android.view.Gravity.CENTER
-      visibility = View.GONE
-    }
-
-    logSummary = TextView(ctx).apply {
-      textSize = sp(11f)
-      setTextColor(getColor(R.color.ds_text_tertiary))
-      setPadding(0, dp(16f), 0, 0)
-      gravity = android.view.Gravity.CENTER
-      typeface = android.graphics.Typeface.MONOSPACE
-      visibility = View.GONE
-    }
-
-    card.addView(engineStatus)
-    card.addView(crashBanner)
-    card.addView(progressBar)
-    card.addView(progressText)
-    card.addView(logSummary)
-    shell.addView(card)
-    cardBlock = shell
-    guide.addView(cardBlock)
-
-    // —— 3. 操作区：胶囊主 CTA + 文字样式次操作 ——
-    fun pressedColor(base: Int): android.content.res.ColorStateList =
-      android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf()), intArrayOf(getColor(R.color.ds_accent_pressed), base))
-    fun rippleOverlay(base: Int): android.graphics.drawable.RippleDrawable =
-      android.graphics.drawable.RippleDrawable(
-        pressedColor(base),
-        android.graphics.drawable.GradientDrawable().apply {
-          setColor(base)
-          cornerRadius = dim(R.dimen.ds_radius_pill)
-        },
-        android.graphics.drawable.GradientDrawable().apply {
-          setColor(getColor(R.color.ds_accent))
-          cornerRadius = dim(R.dimen.ds_radius_pill)
-        },
-      )
-
-    val retry = Button(ctx).apply {
-      text = "启动引擎"
-      isAllCaps = false
-      textSize = sp(14f)
-      setTextColor(getColor(R.color.ds_text_on_accent))
-      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-      background = rippleOverlay(getColor(R.color.ds_accent))
-      stateListAnimator = null
-      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpix(R.dimen.ds_btn_height))
-      lp.setMargins(dp(8f), 0, dp(8f), 0)
-      layoutParams = lp
-      setOnClickListener {
-        animate().scaleX(0.97f).scaleY(0.97f).setDuration(90).withEndAction {
-          animate().scaleX(1f).scaleY(1f).setDuration(150).start()
-          startEngineFlow()
-        }.start()
-      }
-    }
-    val openConsole = Button(ctx).apply {
-      text = "打开控制台"
-      isAllCaps = false
-      textSize = sp(14f)
-      setTextColor(getColor(R.color.ds_accent))
-      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-      background = rippleOverlay(android.graphics.Color.TRANSPARENT)
-      stateListAnimator = null
-      setPadding(dp(18f), dp(12f), dp(18f), dp(12f))
-      setOnClickListener { startActivity(Intent(this@MainActivity, ConsoleActivity::class.java)) }
-    }
-    val update = Button(ctx).apply {
-      text = "检查更新"
-      isAllCaps = false
-      textSize = sp(14f)
-      setTextColor(getColor(R.color.ds_accent))
-      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-      background = rippleOverlay(android.graphics.Color.TRANSPARENT)
-      stateListAnimator = null
-      setPadding(dp(18f), dp(12f), dp(18f), dp(12f))
-      setOnClickListener {
-        UpdateManager(this@MainActivity).checkAndApply { status ->
-          runOnUiThread { engineStatus.text = status }
-        }
-      }
-    }
-    actionBlock = LinearLayout(ctx).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = android.view.Gravity.CENTER
-      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }.also {
-      it.addView(retry)
-      it.addView(LinearLayout(ctx).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = android.view.Gravity.CENTER
-        setPadding(0, dp(4f), 0, 0)
-        addView(openConsole)
-        addView(update)
-      })
-    }
-    guide.addView(actionBlock)
-    return guide
+    engineStatus = chrome.engineStatus
+    progressText = chrome.progressText
+    progressBar = chrome.progressBar
+    crashBanner = chrome.crashBanner
+    logSummary = chrome.logSummary
+    brandBlock = chrome.brandBlock
+    cardBlock = chrome.cardBlock
+    actionBlock = chrome.actionBlock
+    chrome.versionLabel.text = "v" + BuildConfig.VERSION_NAME
+    refreshGuideMeta()
+    return chrome.root
   }
 
-  /** 测试界面入场：品牌区/状态卡/操作区依次淡入上移，轻柔节奏。 */
+  /** 测试界面入场：品牌区/状态卡/操作区依次淡入上移。仅在界面从隐藏变为可见时播放。 */
   private fun animateGuideReveal() {
-    val interp = android.view.animation.PathInterpolator(0.32f, 0.72f, 0f, 1f)
-    val rise = (14 * resources.displayMetrics.density).toInt().toFloat()
+    val rise = 16 * resources.displayMetrics.density
     val items = listOf(brandBlock, cardBlock, actionBlock)
     items.forEachIndexed { i, v ->
+      v.animate().cancel()
       v.alpha = 0f
       v.translationY = rise
       v.animate()
         .alpha(1f).translationY(0f)
-        .setStartDelay(i * 90L).setDuration(420L)
-        .setInterpolator(interp).start()
+        .setStartDelay(i * 80L).setDuration(480L)
+        .setInterpolator(DsUi.ease).start()
+    }
+  }
+
+  private enum class GuidePhase { Idle, Starting, Extracting, Updating, Recovering, Error, Closed }
+
+  private fun applyGuidePhase(phase: GuidePhase, title: String, hint: String? = null) {
+    lastGuidePhase = phase
+    engineStatus.text = title
+    val resolvedHint = hint ?: defaultHint(phase)
+    chrome.statusHint.text = resolvedHint
+    chrome.statusHint.visibility = if (resolvedHint.isBlank()) View.GONE else View.VISIBLE
+
+    val busy = phase == GuidePhase.Starting ||
+      phase == GuidePhase.Extracting ||
+      phase == GuidePhase.Updating ||
+      phase == GuidePhase.Recovering
+    val lockPrimary = phase == GuidePhase.Starting ||
+      phase == GuidePhase.Extracting ||
+      phase == GuidePhase.Updating
+    chrome.primaryButton.isEnabled = !lockPrimary
+    chrome.primaryButton.alpha = if (lockPrimary) 0.55f else 1f
+    chrome.primaryButton.text = when (phase) {
+      GuidePhase.Closed -> getString(R.string.ds_restart)
+      GuidePhase.Error, GuidePhase.Recovering -> getString(R.string.ds_retry)
+      GuidePhase.Starting, GuidePhase.Extracting -> getString(R.string.ds_starting)
+      GuidePhase.Updating -> getString(R.string.ds_updating)
+      GuidePhase.Idle -> getString(R.string.ds_start_engine)
+    }
+
+    val showProgress = busy
+    progressBar.visibility = if (showProgress) View.VISIBLE else View.GONE
+    progressBar.isIndeterminate = true
+    if (phase != GuidePhase.Extracting) progressText.visibility = View.GONE
+
+    val dotColor = when (phase) {
+      GuidePhase.Error, GuidePhase.Closed -> getColor(R.color.ds_danger)
+      GuidePhase.Updating, GuidePhase.Extracting -> getColor(R.color.ds_warn)
+      GuidePhase.Starting, GuidePhase.Recovering -> getColor(R.color.ds_accent)
+      GuidePhase.Idle -> getColor(R.color.ds_text_tertiary)
+    }
+    chrome.statusDot.background = DsUi.oval(dotColor)
+    setStatusPulse(busy)
+    refreshGuideMeta()
+  }
+
+  private fun defaultHint(phase: GuidePhase): String = when (phase) {
+    GuidePhase.Starting -> "首次启动会解压内嵌运行时，请保持应用在前台。"
+    GuidePhase.Extracting -> "正在写入内嵌 Termux 环境，约 70MB。"
+    GuidePhase.Updating -> "下载并校验快照后会自动切换运行时。"
+    GuidePhase.Recovering -> "看门狗正在拉起引擎，通常几秒内恢复。"
+    GuidePhase.Error -> "可打开控制台查看 engine.log，或点击重试。"
+    GuidePhase.Closed -> "引擎已停止，不会自动恢复。"
+    GuidePhase.Idle -> "引擎就绪后将进入 DeepCode。"
+  }
+
+  private fun setStatusPulse(on: Boolean) {
+    if (on) {
+      val anim = statusPulse ?: ObjectAnimator.ofFloat(chrome.statusDot, View.ALPHA, 1f, 0.28f).apply {
+        duration = 900
+        repeatMode = ValueAnimator.REVERSE
+        repeatCount = ValueAnimator.INFINITE
+        interpolator = DsUi.ease
+        statusPulse = this
+      }
+      if (!anim.isStarted) anim.start()
+    } else {
+      statusPulse?.cancel()
+      chrome.statusDot.alpha = 1f
+    }
+  }
+
+  private fun refreshGuideMeta() {
+    if (!::chrome.isInitialized) return
+    val runtimeReady = try { engineManager.engineReady } catch (_: Exception) { false }
+    chrome.runtimeChip.text = if (runtimeReady) {
+      getString(R.string.ds_runtime_ready)
+    } else {
+      getString(R.string.ds_runtime_pending)
+    }
+    val storageOk = Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager()
+    chrome.storageChip.text = if (storageOk) {
+      getString(R.string.ds_storage_granted)
+    } else {
+      getString(R.string.ds_storage_needed)
+    }
+    chrome.storageChip.setTextColor(
+      getColor(if (storageOk) R.color.ds_text_secondary else R.color.ds_accent),
+    )
+  }
+
+  private fun copyGuideLog() {
+    val text = logSummary.text?.toString().orEmpty()
+    if (text.isBlank()) return
+    copyTextNative(text)
+    android.widget.Toast.makeText(this, "日志已复制", android.widget.Toast.LENGTH_SHORT).show()
+  }
+
+  private fun startUpdateCheck() {
+    if (!updateRunning.compareAndSet(false, true)) return
+    chrome.updateButton.isEnabled = false
+    chrome.updateButton.alpha = 0.55f
+    applyGuidePhase(GuidePhase.Updating, "检查更新…")
+    UpdateManager(this).checkAndApply { status ->
+      runOnUiThread {
+        val done = status.startsWith("更新完成") || status.startsWith("更新失败")
+        applyGuidePhase(
+          if (status.startsWith("更新失败")) GuidePhase.Error
+          else if (status.startsWith("更新完成")) GuidePhase.Recovering
+          else GuidePhase.Updating,
+          status,
+        )
+        if (done) {
+          updateRunning.set(false)
+          chrome.updateButton.isEnabled = true
+          chrome.updateButton.alpha = 1f
+        }
+      }
     }
   }
 
@@ -1359,9 +1297,7 @@ class MainActivity : ComponentActivity() {
     freezeHandler.removeCallbacks(freezeRunnable)
     runOnUiThread {
       hideSoftInput()
-      progressBar.visibility = View.GONE
-      progressText.visibility = View.GONE
-      engineStatus.text = "引擎已关闭。点击“重试”可重新启动。"
+      applyGuidePhase(GuidePhase.Closed, "引擎已关闭")
       showGuide()
     }
     try { EngineService.instance?.requestShutdown() } catch (_: Exception) {
@@ -1399,46 +1335,47 @@ class MainActivity : ComponentActivity() {
       // 启动即有反馈：进入测试界面显示"正在启动引擎…"（不再白屏等 probe）。
       runOnUiThread {
         if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-        progressBar.visibility = View.GONE
-        progressText.visibility = View.GONE
-        engineStatus.text = "正在启动引擎…"
+        applyGuidePhase(GuidePhase.Starting, "正在启动引擎…")
         showGuide()
       }
       if (!engineManager.snapshotFresh()) {
         if (!isCurrentEngineFlow(generation)) return@Thread
         runOnUiThread {
           if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-          progressBar.visibility = View.VISIBLE
+          applyGuidePhase(GuidePhase.Extracting, "正在解压运行时")
           progressText.visibility = View.VISIBLE
-          engineStatus.text = "正在更新运行时（约 70MB）…"
+          progressText.text = "准备写入内嵌环境…"
         }
-        val ok = engineManager.refreshSnapshot { done, total ->
+        val ok = engineManager.refreshSnapshot { done, _ ->
           runOnUiThread {
             if (!isCurrentEngineFlow(generation)) return@runOnUiThread
             // done 是解压后字节数，total 是压缩包字节数，口径不一致；只显示已解压量。
-            engineStatus.text = "正在更新运行时… " + done / 1024 / 1024 + " MB"
+            val mb = done / 1024 / 1024
+            progressText.visibility = View.VISIBLE
+            progressText.text = "已写入 " + mb + " MB"
+            if (lastGuidePhase != GuidePhase.Extracting) {
+              applyGuidePhase(GuidePhase.Extracting, "正在解压运行时")
+            }
           }
         }
         if (!ok) {
           runOnUiThread {
             if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-            engineStatus.text = "运行时更新失败，请重试。"
+            applyGuidePhase(GuidePhase.Error, "运行时更新失败")
             showGuide()
           }
           return@Thread
         }
         runOnUiThread {
           if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-          progressBar.visibility = View.GONE
-          progressText.visibility = View.GONE
-          engineStatus.text = "正在启动引擎…"
+          applyGuidePhase(GuidePhase.Starting, "正在启动引擎…")
         }
       }
       if (!isCurrentEngineFlow(generation)) return@Thread
       if (!engineManager.startEngine()) {
         runOnUiThread {
           if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-          engineStatus.text = "引擎启动失败，请重试。"
+          applyGuidePhase(GuidePhase.Error, "引擎启动失败")
           showGuide()
         }
         return@Thread
@@ -1452,10 +1389,17 @@ class MainActivity : ComponentActivity() {
           runOnUiThread { if (isCurrentEngineFlow(generation)) showWeb() }
           return@Thread
         }
+        if (i == 8 || i == 16) {
+          val waited = i
+          runOnUiThread {
+            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
+            applyGuidePhase(GuidePhase.Starting, "正在等待 Web 服务…", "引擎进程已拉起，正在探测 127.0.0.1:3080（${waited}s）。")
+          }
+        }
         Thread.sleep(1000)
       }
       if (isCurrentEngineFlow(generation)) runOnUiThread {
-          engineStatus.text = "引擎启动超时，请重试。"
+          applyGuidePhase(GuidePhase.Error, "引擎启动超时")
           showGuide()
         }
       } finally {
@@ -1474,11 +1418,13 @@ class MainActivity : ComponentActivity() {
     val manager = UpdateManager(this)
     manager.checkAndApply { status ->
       runOnUiThread {
-        engineStatus.text = status
-        progressText.visibility = View.VISIBLE
-        guideView.visibility = View.VISIBLE
-        animateGuideReveal()
-        webView.visibility = View.GONE
+        val phase = when {
+          status.startsWith("更新失败") -> GuidePhase.Error
+          status.startsWith("更新完成") -> GuidePhase.Recovering
+          else -> GuidePhase.Updating
+        }
+        applyGuidePhase(phase, status)
+        showGuide()
       }
       try {
         statusFile.appendText(status + "\n")
@@ -1517,21 +1463,25 @@ class MainActivity : ComponentActivity() {
 
   /** 进入测试界面（引擎失败/未就绪回退）：状态 + 崩溃横幅 + engine.log 摘要。 */
   private fun showGuide() {
+    val becomingVisible = guideView.visibility != View.VISIBLE
     webView.visibility = View.GONE
     guideView.visibility = View.VISIBLE
-    animateGuideReveal()
+    if (becomingVisible) animateGuideReveal()
     val crash = crashInfo
     if (crash != null) {
       crashBanner.visibility = View.VISIBLE
       crashBanner.text = "上次异常退出：$crash"
+    } else {
+      crashBanner.visibility = View.GONE
     }
     val tail = tailEngineLog(8)
     if (tail.isNotEmpty()) {
-      logSummary.visibility = View.VISIBLE
-      logSummary.text = "engine.log 末尾：\n$tail"
+      logSummary.text = tail
+      chrome.logSection.visibility = View.VISIBLE
     } else {
-      logSummary.visibility = View.GONE
+      chrome.logSection.visibility = View.GONE
     }
+    refreshGuideMeta()
   }
 
   /** Hide Android's soft keyboard before replacing the WebView with the guide. */
