@@ -30,27 +30,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # ---- checkout：apk 自身 + root 脚本 + 3 插件仓 ----
+      # ---- checkout：apk 自身 + root 脚本 + 3 插件仓（path 必须在 workspace 内）----
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
           repository: kelai141/dsh-mobile
-          path: ../dsh-mobile
+          path: dsh-mobile
       - uses: actions/checkout@v4
         with:
           repository: kelai141/dsh-shell-termux
           ref: ${{ inputs.plugins_ref || 'main' }}
-          path: ../dsh-shell-termux
+          path: dsh-shell-termux
       - uses: actions/checkout@v4
         with:
           repository: kelai141/dsh-client-ui-responsive
           ref: ${{ inputs.plugins_ref || 'main' }}
-          path: ../dsh-client-ui-responsive
+          path: dsh-client-ui-responsive
       - uses: actions/checkout@v4
         with:
           repository: kelai141/dsh-host-web-compat
           ref: ${{ inputs.plugins_ref || 'main' }}
-          path: ../dsh-host-web-compat
+          path: dsh-host-web-compat
 
       # ---- 构建环境 ----
       - uses: actions/setup-java@v4
@@ -96,16 +96,16 @@ jobs:
       - name: 插件构建 + pack
         run: |
           mkdir -p plugins
-          (cd ../dsh-shell-termux && npm ci && npm run build && npm pack --pack-destination "$GITHUB_WORKSPACE/plugins")
-          (cd ../dsh-client-ui-responsive && npm ci && npm run build && npm pack --pack-destination "$GITHUB_WORKSPACE/plugins")
-          (cd ../dsh-host-web-compat && npm pack --pack-destination "$GITHUB_WORKSPACE/plugins")
+          (cd dsh-shell-termux && npm ci && npm run build && npm pack --pack-destination "$GITHUB_WORKSPACE/plugins")
+          (cd dsh-client-ui-responsive && npm ci && npm run build && npm pack --pack-destination "$GITHUB_WORKSPACE/plugins")
+          (cd dsh-host-web-compat && npm pack --pack-destination "$GITHUB_WORKSPACE/plugins")
           ls -l plugins/
 
       # ---- 快照注入（字节级 tar 流，保留 symlink 元数据）----
       - name: 快照注入
         run: |
           for abi in arm64 x86_64; do
-            python3 ../dsh-mobile/scripts/inject-snapshot.py \
+            python3 dsh-mobile/scripts/inject-snapshot.py \
               "snapshot/snapshot-${abi}.tar.xz" "snapshot/snapshot-${abi}.new.tar.xz" \
               "$GITHUB_WORKSPACE/dsh-shell-termux" "$GITHUB_WORKSPACE/dsh-client-ui-responsive" "$GITHUB_WORKSPACE/dsh-host-web-compat"
             mv "snapshot/snapshot-${abi}.new.tar.xz" "snapshot/snapshot-${abi}.tar.xz"
@@ -115,8 +115,8 @@ jobs:
       - name: 门禁
         run: |
           PLUGINS="$GITHUB_WORKSPACE/dsh-shell-termux $GITHUB_WORKSPACE/dsh-client-ui-responsive $GITHUB_WORKSPACE/dsh-host-web-compat"
-          python3 ../dsh-mobile/scripts/ci-verify-snapshot.py snapshot/snapshot-arm64.tar.xz aarch64 $PLUGINS
-          python3 ../dsh-mobile/scripts/ci-verify-snapshot.py snapshot/snapshot-x86_64.tar.xz x86_64 $PLUGINS
+          python3 dsh-mobile/scripts/ci-verify-snapshot.py snapshot/snapshot-arm64.tar.xz aarch64 $PLUGINS
+          python3 dsh-mobile/scripts/ci-verify-snapshot.py snapshot/snapshot-x86_64.tar.xz x86_64 $PLUGINS
 
       # ---- 双 ABI APK（每次构建前换快照 + 指纹）----
       - name: 双 ABI APK 构建
