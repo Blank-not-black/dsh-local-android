@@ -125,6 +125,9 @@ jobs:
 
       # ---- 双 ABI APK（每次构建前换快照 + 指纹）----
       - name: 双 ABI APK 构建
+        env:
+          # GitHub runner 的 ~/.config 不可写，AGP 建 debug keystore 失败；改到 workspace 可写目录。
+          ANDROID_USER_HOME: ${{ github.workspace }}/.android-home
         run: |
           chmod +x gradlew
           mkdir -p out/apk out/snapshot out/plugins
