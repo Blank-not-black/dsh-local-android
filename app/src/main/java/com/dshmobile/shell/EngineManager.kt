@@ -75,7 +75,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
         // 包的断裂 symlink（npm 布局变化）——copyRecursively 对断裂链接的
         // exists() 检查会抛 NoSuchFileException 使整个 refresh 失败。备份前
         // 清掉断裂链接（profiles 以快照为准，备份不含它）。
-        dsh.walkTopDown().forEach { if (it.isSymbolicLink() && !it.exists()) it.delete() }
+        dsh.walkTopDown().forEach { if (java.nio.file.Files.isSymbolicLink(it.toPath()) && !it.exists()) it.delete() }
         dsh.copyRecursively(backup)
       }
       val ok = extractSnapshot(onProgress)
