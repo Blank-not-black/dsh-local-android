@@ -75,8 +75,10 @@ jobs:
           echo "version=${VER}${SUF}" >> "$GITHUB_OUTPUT"
           echo "基础版本: $VER 后缀: '$SUF' → ${VER}${SUF}"
 
-      # ---- 下载快照（draft release 资产需 token；draft 不走 tags 端点，用 releases 列表遍历）----
+      # ---- 下载快照（draft release 资产需 PAT；GITHUB_TOKEN 无 draft 可见性）----
       - name: 下载快照
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           mkdir -p snapshot
           TAG="${{ inputs.snapshot_tag || 'snapshot-input' }}"
