@@ -5,7 +5,14 @@ import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, copyFile, link, mkdir, open, readFile, unlink } from "node:fs/promises";
-import sharp from "sharp";
+// attachment-lazy-sharp: sharp has no android runtime; load lazily so the
+// engine boots on android (image processing degrades there).
+let sharp = null;
+try { sharp = (await import("sharp")).default } catch { /* unavailable */ }
+function requireSharp() {
+  if (!sharp) throw new AttachmentError("Image processing unavailable on this platform", "IMAGE_PROCESSING_UNAVAILABLE");
+  return sharp;
+}
 //#region lib/types/image.js
 /** Raster inspection: full decode at admission, header-only probe on verified reads. */
 const MEDIA_TYPES = {
@@ -34,7 +41,7 @@ async function imageMetadata(image) {
 */
 async function probeImage(data) {
 	try {
-		return await imageMetadata(sharp(data, {
+		return await imageMetadata(requireSharp()(data, {
 			failOn: "error",
 			limitInputPixels: false
 		}));
@@ -51,7 +58,7 @@ async function probeImage(data) {
 */
 async function detectImage(data, limits) {
 	try {
-		const image = sharp(data, {
+		const image = requireSharp()(data, {
 			failOn: "error",
 			limitInputPixels: false
 		});
