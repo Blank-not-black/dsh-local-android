@@ -15,6 +15,6 @@
   <color name="ds_ok">#2DD4BF</color>
   <color name="ds_warn">#F0B429</color>
   <color name="ds_danger">#F87171</color>
-  <color name="ds_danger_soft">#1AF87171
+  <color name="ds_danger_soft">#1AF87171</color>
   <color name="ds_progress_track">#1AECECEC</color>
 </resources>
