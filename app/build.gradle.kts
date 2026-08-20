@@ -30,9 +30,25 @@ android {
     noCompress += "xz"
   }
 
+  signingConfigs {
+    // Fixed debug signing from the repo keystore: CI and local builds must produce
+    // byte-compatible signatures, otherwise users cannot install over previous
+    // releases (INSTALL_FAILED_UPDATE_INCOMPATIBLE). AGP's default debug keystore
+    // lookup (~/.android/debug.keystore) is unreliable on CI runners, so pin it.
+    create("repoDebug") {
+      storeFile = rootProject.file("keystore/debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
+    }
+    debug {
+      signingConfig = signingConfigs.getByName("repoDebug")
     }
   }
 
