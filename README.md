@@ -19,10 +19,14 @@ install: it boots a full dsh web agent that can really execute bash.
   first launch extracts in ~10s and starts the engine from the app's own files; fully offline.
 - **Mobile UI** — system WebView over `http://127.0.0.1:3080` with the responsive plugin
   (drawer/sheet on phones).
-- **Keep-alive** — foreground service ("dsh 引擎运行中") + 5s watchdog that restarts a dead engine.
+- **Built-in console** — standalone bash terminal (`assets/console.html` + embedded Termux),
+  usable for diagnostics even when the engine is down.
+- **Keep-alive** — foreground service ("dsh 引擎运行中") + 5s watchdog that restarts a dead engine
+  + 3s UI monitor poll.
 - **Online runtime updates** — manifest-driven snapshot swap (download → sha256 → atomic switch →
   auto-restart); the running runtime can update itself without an APK update.
 - **SAF bridge** — `pickDirectory` maps the picked tree to a real path (`/storage/emulated/0/…`).
+- **Device access** — All Files Access, optional Shizuku keep-alive boost.
 
 ## Build
 
@@ -30,8 +34,7 @@ Requirements: JDK 17+, Android SDK (compileSdk 36); Gradle 8.11.1 via wrapper.
 
 ```sh
 # 1. Prepare the runtime snapshot (required, ~70MB, distributed as a Release asset)
-#    Option A: download snapshot-x86_64.tar.xz from GitHub Releases
-#    Option B: build on a Termux device (scripts/make-snapshot.sh) and pull it
+#    Download snapshot-x86_64.tar.xz from GitHub Releases (pick the arch/pagesize variant you need)
 mkdir -p app/src/main/assets
 cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 
@@ -42,13 +45,38 @@ cp snapshot/snapshot.tar.xz app/src/main/assets/snapshot.tar.xz
 
 ## Bridge protocol v1 (`window.androidBridge`)
 
+App name `DeepCode`, package `com.dsharnessmobile.shell`. `androidBridge.version` returns the app
+version (currently `0.12.4`); pages feature-detect on it.
+
+**Synchronous**
+
 | method | signature | description |
 |---|---|---|
-| `version` | getter → string | bridge protocol version (`"1.0"`) for feature detection |
-| `checkEngine` | () → string | probes 127.0.0.1:3080; JSON `{running, latencyMs}` |
-| `keepScreenOn` | (enable: boolean) | screen-on wake lock |
+| `version` | () → string | app version (`0.12.4`) for feature detection |
+| `getSystemDark` | () → boolean | system dark mode (bypasses vendor WebViews whose `matchMedia` is stuck on light; used by the first-frame theme bridge) |
+| `checkEngine` | () → string | probes 127.0.0.1:3080; JSON `{running, latencyMs, error?}` |
+| `hasAllFilesAccess` | () → boolean | whether All Files Access is granted (external workspace requirement) |
+| `getPickToken` | () → string | one-shot token for the directory-picker bridge (validated by the engine-side pick endpoint) |
+| `copyText` | (text) → boolean | native clipboard write (WebView `clipboard.writeText` is always rejected; page falls back to this) |
+| `getDevLogEnabled` | () → boolean | dev debug-log toggle state |
+
+**Commands**
+
+| method | signature | description |
+|---|---|---|
+| `keepScreenOn` | (enable) | screen-on wake lock |
 | `showNotification` | (title, text) | test notification channel (POST_NOTIFICATIONS) |
-| `pickDirectory` | (callbackId: string) | SAF tree picker; result async via `window.__dshBridge.onDirectoryPicked(callbackId, path)` |
+| `pickDirectory` | (callbackId) | SAF tree picker; result async via `window.__dshBridge.onDirectoryPicked(callbackId, path)` |
+| `pickImage` | (callbackId) | SAF image picker; result async via the same callback |
+| `setTextZoom` | (percent) | WebView font scale (50–200; Settings → General slider) |
+| `setImmersiveMode` | (enable) | immersive status bar toggle (true = status bar normally hidden) |
+| `downloadDebugLogs` | () | exports engine logs + environment info (zipped, system download/share dialog) |
+| `requestAllFilesAccess` | () | opens the system All Files Access grant page (special permission) |
+| `restartEngine` | () | restarts the engine process (EngineService watchdog brings it back) |
+| `shutdownToGuide` | () | stops the engine and falls back to the test screen (no auto-restart) |
+| `reloadWebUI` | () | reloads the Web UI |
+| `openConsole` | () | opens the built-in console |
+| `setDevLogEnabled` | (enabled) | sets the dev debug-log toggle (logs go under `dshdata/log/` when on) |
 
 The bridge decouples the APK from the dsh version: pages feature-detect on `androidBridge.version`.
 
@@ -61,12 +89,19 @@ The bridge decouples the APK from the dsh version: pages feature-detect on `andr
    restarts it from the new runtime.
 
 Test trigger: `adb shell am start -n com.dsharnessmobile.shell/.MainActivity -a com.dsharnessmobile.shell.action.UPDATE`;
-status is written to `files/update-status.txt`. Test server: `node scripts/snapshot-server.mjs`.
+status is written to `files/update-status.txt`. Test server: serve `manifest.json` + the snapshot from any
+local HTTP server (default endpoint `http://10.0.2.2:8899/manifest.json` maps the host from the emulator).
 
 ## Permissions
 
-`INTERNET` (WebView + engine probe), `POST_NOTIFICATIONS` (notification channel),
-`FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` (keep-alive). SAF picking needs no permission.
+| permission | purpose |
+|---|---|
+| `INTERNET` | WebView + engine probe |
+| `POST_NOTIFICATIONS` | notification channel (runtime request on API 33+) |
+| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | keep-alive foreground service |
+| `MANAGE_EXTERNAL_STORAGE` | All Files Access (external workspace requirement; special permission, user-granted) |
+
+SAF picking needs no permission.
 
 ## ABI & pagesize
 
