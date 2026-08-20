@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <!-- 启动图标背景(保持) -->
   <color name="ic_launcher_background">#ffffff</color>
+
+  <!-- UI 设计 token:高端极简 + teal 点缀(浅色) -->
+  <color name="ds_bg">#FAFAF9</color>
+  <color name="ds_surface">#FFFFFF</color>
+  <color name="ds_border">#14000000</color>
+  <color name="ds_text_primary">#18181B</color>
+  <color name="ds_text_secondary">#8C18181B</color>
+  <color name="ds_text_tertiary">#5918181B</color>
+  <color name="ds_accent">#0D9488</color>
+  <color name="ds_accent_pressed">#0F766E</color>
+  <color name="ds_danger">#DC2626</color>
+  <color name="ds_progress_track">#1A18181B</color>
 </resources>
