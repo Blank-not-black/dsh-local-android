@@ -126,6 +126,7 @@ jobs:
       # ---- 双 ABI APK（每次构建前换快照 + 指纹）----
       - name: 双 ABI APK 构建
         run: |
+          chmod +x gradlew
           mkdir -p out/apk out/snapshot out/plugins
           VER="${{ steps.ver.outputs.version }}"
           for pair in "arm64-v8a:snapshot-arm64.tar.xz" "x86_64:snapshot-x86_64.tar.xz"; do
