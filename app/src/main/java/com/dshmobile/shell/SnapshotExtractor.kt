@@ -48,6 +48,12 @@ object SnapshotExtractor {
         }
         else -> {
           target.parentFile?.mkdirs()
+          // Overwrite-safety: a previous extraction can leave a read-only regular file
+          // (measured: termux-am/am.apk with 0400 on some emulator ROMs — FileOutputStream
+          // would fail EACCES on the upgrade re-extract). deleteIfExists does not follow
+          // links, so stale/dangling files are cleared before the new copy is written,
+          // mirroring the symlink branch above.
+          java.nio.file.Files.deleteIfExists(target.toPath())
           target.outputStream().use { out ->
             val buf = ByteArray(64 * 1024)
             var n = tar.read(buf)
