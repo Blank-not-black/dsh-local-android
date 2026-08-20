@@ -14,13 +14,13 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 /**
- * 开发者调试日志收集器（默认关，设置界面「开发者选项」开关控制）：
- * logcat（本 uid：壳 + 引擎子进程）+ engine.log 增量 → 按天追加写入
- * Documents/dshdata/log/dsh-<yyyy-MM-dd>.log（未授 MANAGE_EXTERNAL_STORAGE
- * 回退 filesDir/log/，路径在设置页显示）。单文件超 5MB 轮转为
- * dsh-<date>.1.log；跨天自动换新文件。进程级单例，start/stop 幂等。
+ * Dev debug-log collector (default off; controlled by the Settings → Developer options toggle):
+ * logcat (own uid: shell + engine child processes) + engine.log incremental tail → appended daily to
+ * Documents/dshdata/log/dsh-<yyyy-MM-dd>.log (falls back to filesDir/log/ without
+ * MANAGE_EXTERNAL_STORAGE; the path is shown on the settings page). Files over 5MB rotate to
+ * dsh-<date>.1.log; a new file starts on each new day. Process-level singleton, start/stop idempotent.
  *
- * 隐私：日志含命令与模型内容，仅用于排查；不读取任何凭据文件。
+ * Privacy: logs contain commands and model content, for troubleshooting only; no credential files are read.
  */
 object LogCollector {
 
@@ -32,10 +32,10 @@ object LogCollector {
   private var executor: ScheduledExecutorService? = null
   private var appContext: Context? = null
 
-  /** engine.log 增量读取偏移（进程内跟踪；文件被截断/轮转时从头）。 */
+  /** engine.log incremental read offset (in-process; restarts from the top on truncation/rotation). */
   private var engineLogOffset = 0L
 
-  /** 上一轮 logcat 最后一行时间戳（threadtime "MM-dd HH:mm:ss.SSS" 字典序）。 */
+  /** Last seen logcat line timestamp (threadtime "MM-dd HH:mm:ss.SSS"; lexicographic order). */
   private var lastLogcatTs = ""
 
   fun start(context: Context) {
@@ -57,9 +57,9 @@ object LogCollector {
   }
 
   /**
-   * 壳事件直写日志（不依赖 logcat——MuMu/Android 15 实测 logd 对非特权
-   * app 屏蔽 logcat 读取，即使 --pid 匹配）。仅在收集器启动时落盘；
-   * 引擎启停/崩溃标记/重启等关键事件在发生时经此写入。
+   * Write shell events directly (no logcat dependency — on MuMu/Android 15 logd blocks logcat reads
+   * for non-privileged apps even with a matching --pid). Persisted only while the collector runs;
+   * key events (engine start/stop, crash marker, restarts) are written here as they occur.
    */
   fun log(tag: String, message: String) {
     val ctx = appContext ?: return
@@ -71,7 +71,7 @@ object LogCollector {
     }
   }
 
-  /** 当前日志落盘目录（未授权公共目录时回退私有 filesDir/log）。 */
+  /** Current log directory (falls back to private filesDir/log without the public-dir grant). */
   fun currentDir(context: Context): File {
     val base = if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
       val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
@@ -98,9 +98,10 @@ object LogCollector {
   }
 
   /**
-   * logcat 增量：Android 13+/MuMu 实测 logd 只放行调用进程自身的日志
-   * （run-as 同 uid 也读不到）——显式 --pid=<壳进程>；引擎日志由
-   * engine.log 增量覆盖（引擎 stdout 重定向），两条源互补。
+   * Incremental logcat: on Android 13+/MuMu logd only releases the calling process's own logs
+   * (run-as with the same uid can't read them either) — pass --pid=<shell process> explicitly;
+   * engine logs are covered by the engine.log incremental tail (engine stdout is redirected),
+   * so the two sources complement each other.
    */
   private fun readLogcat(): String {
     return try {
@@ -127,13 +128,13 @@ object LogCollector {
     }
   }
 
-  /** engine.log 增量尾部（引擎 stdout 重定向文件）。 */
+  /** Incremental engine.log tail (the engine stdout redirection file). */
   private fun readEngineLog(ctx: Context): String {
     val f = File(ctx.filesDir, "engine.log")
     if (!f.exists()) return ""
     return try {
       RandomAccessFile(f, "r").use { raf ->
-        if (engineLogOffset > raf.length()) engineLogOffset = 0 // 文件被轮转/截断
+        if (engineLogOffset > raf.length()) engineLogOffset = 0 // file was rotated/truncated
         raf.seek(engineLogOffset)
         val size = (raf.length() - engineLogOffset).toInt().coerceAtMost(MAX_ENGINE_CHUNK)
         val buf = ByteArray(size)
@@ -147,7 +148,7 @@ object LogCollector {
     }
   }
 
-  /** 按天轮转落盘：dsh-<日期>.log；超限轮转为 dsh-<日期>.1.log。 */
+  /** Daily rotation: dsh-<date>.log, rotating to dsh-<date>.1.log when over the size limit. */
   private fun appendToDayFile(ctx: Context, text: String) {
     val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
     val dir = currentDir(ctx)

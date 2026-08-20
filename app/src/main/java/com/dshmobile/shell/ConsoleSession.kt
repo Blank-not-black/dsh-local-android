@@ -5,29 +5,29 @@ import android.util.Log
 import java.io.File
 
 /**
- * 控制台会话：spawn 快照 bash（env 与引擎一致：PATH/LD_LIBRARY_PATH/
- * HOME/DSH_HOME/TERMUX_*），stdin 写命令、stdout/stderr 合并后台读，
- * 输出经 Listener 回调回 UI。引擎未运行时也可用（排查引擎启动失败场景）；
- * Activity 销毁时进程随之终止。
+ * Console session: spawns the snapshot bash (env matching the engine: PATH/LD_LIBRARY_PATH/
+ * HOME/DSH_HOME/TERMUX_*), writes commands to stdin, reads merged stdout/stderr on a background
+ * thread, and streams output back to the UI via a Listener. Works even when the engine is not
+ * running (for diagnosing engine startup failures); the process dies with the Activity.
  *
- * 非 PTY 交互（bash -i）：无 job control 提示，命令逐行执行；完整 PTY
- * （script -q -c bash）列为后续迭代。
+ * Non-PTY interaction (bash -i): no job-control prompts, commands run line by line; full PTY
+ * (script -q -c bash) is planned for a later iteration.
  */
 class ConsoleSession(private val context: Context) {
 
   interface Listener {
-    /** 输出块（已做 \r 折叠、bell 忽略），任意线程回调。 */
+    /** Output chunk (\r collapsed, bell ignored); callback on any thread. */
     fun onOutput(text: String)
-    /** 状态文案（启动/退出），任意线程回调。 */
+    /** Status text (startup/exit); callback on any thread. */
     fun onStatus(text: String)
-    /** bash 进程退出码。 */
+    /** bash process exit code. */
     fun onExit(code: Int)
   }
 
   private var process: Process? = null
   private var closed = false
 
-  /** 启动 bash；失败时经 listener.onStatus 报告原因并返回 false。 */
+  /** Start bash; on failure report the reason via listener.onStatus and return false. */
   fun start(listener: Listener): Boolean {
     val engineManager = EngineManager(context, EngineManager.ensurePickToken())
     val bash = File(engineManager.usrDir, "bin/bash")
@@ -35,8 +35,8 @@ class ConsoleSession(private val context: Context) {
       listener.onStatus("快照缺失（usr/bin/bash 不存在），无法打开控制台")
       return false
     }
-    // 可执行位兜底：个别设备/文件系统解压后可能丢失 exec 位（execve → EACCES，
-    // 报"Permission denied"）。tar 内模式理论上保留，这里幂等加固。
+    // Exec-bit fallback: some devices/filesystems lose the exec bit after extraction (execve → EACCES,
+    // "Permission denied"). The tar mode is theoretically preserved; this is an idempotent hardening step.
     try {
       bash.setExecutable(true, false)
     } catch (t: Throwable) {
@@ -50,9 +50,9 @@ class ConsoleSession(private val context: Context) {
           p.redirectErrorStream(true)
         }
       val argv = listOf(bash.absolutePath, "-i")
-      // 与引擎同款回退：Android 15/16 及部分厂商系统（荣耀/华为实测）禁止 app 域
-      // 直接 exec app-data ELF（EACCES Permission denied），经 /system/bin/linker64
-      // 加载机制与 Android 系统库一致，始终允许。
+      // Same fallback as the engine: Android 15/16 and some OEM systems (Honor/Huawei, measured)
+      // forbid the app domain from exec'ing an app-data ELF directly (EACCES Permission denied);
+      // loading via /system/bin/linker64 matches the Android system-lib mechanism and always works.
       val proc = try {
         build(argv).start()
       } catch (e: java.io.IOException) {
@@ -67,14 +67,14 @@ class ConsoleSession(private val context: Context) {
             while (true) {
               val c = r.read()
               if (c < 0) break
-              // \r 折叠为 \n（无 PTY 时输出含 CR）；bell 忽略（避免 UI 噪音）。
+              // Collapse \r to \n (output carries CR without PTY); ignore bell (avoids UI noise).
               if (c == '\r'.code) {
                 sb.append('\n')
               } else if (c != '\u0007'.code) {
                 sb.append(c.toChar())
               }
-              // 行缓冲：小输出（echo 等）不能在 4096 阈值后才 flush——
-              // 设备实测整块缓冲会把输出卡到下一次大块/EOF。
+              // Line buffering: small output (echo etc.) must not wait for the 4096 threshold —
+              // on-device measurement showed whole-block buffering stalls output until the next chunk/EOF.
               if (c == '\n'.code || sb.length >= 4096) {
                 val chunk = sb.toString()
                 sb.setLength(0)
@@ -86,9 +86,9 @@ class ConsoleSession(private val context: Context) {
         } catch (t: Throwable) {
           if (!closed) Log.w(TAG, "console reader ended: " + (t.message ?: t.javaClass.simpleName))
         }
-        // destroy() 竞态：bash 收到 SIGTERM 关闭 stdout 后（read 返回 EOF）
-        // 进程可能尚未完全退出——exitValue() 此时抛 IllegalThreadStateException
-        // （设备实测：App 被杀）。按已退出报告，或标记 -1。
+        // destroy() race: after bash closes stdout on SIGTERM (read hits EOF) the process may not have
+        // fully exited yet — exitValue() then throws IllegalThreadStateException (measured when the app
+        // is killed). Report as exited, or mark -1.
         val code = try {
           proc.exitValue()
         } catch (_: IllegalThreadStateException) {
@@ -107,7 +107,7 @@ class ConsoleSession(private val context: Context) {
     }
   }
 
-  /** 写一条命令（自动补 \n）。 */
+  /** Write one command (appends \n). */
   fun writeCommand(cmd: String) {
     val proc = process ?: return
     try {
@@ -118,7 +118,7 @@ class ConsoleSession(private val context: Context) {
     }
   }
 
-  /** 终止会话（Activity 销毁）。 */
+  /** Terminate the session (Activity destroyed). */
   fun destroy() {
     closed = true
     process?.destroy()

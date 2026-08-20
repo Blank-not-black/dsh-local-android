@@ -39,10 +39,10 @@ object SnapshotExtractor {
         entry.isDirectory -> target.mkdirs()
         entry.isSymbolicLink -> {
           target.parentFile?.mkdirs()
-          // deleteIfExists 不跟随链接：覆盖重解压时旧 symlink 可能是悬空的
-          // （File.exists() 跟随链接对 dangling 返回 false，会漏删导致
-          // createSymbolicLink 抛 FileAlreadyExistsException——v0.10.7
-          // 升级重解压实测）。对普通文件/目录同样安全删除。
+          // deleteIfExists does not follow links: on an overwrite re-extract an old symlink may be
+          // dangling (File.exists() follows links, returning false for dangling ones, so the stale
+          // link would survive and createSymbolicLink would throw FileAlreadyExistsException —
+          // measured on the v0.10.7 upgrade re-extract). Also safe for regular files/dirs.
           java.nio.file.Files.deleteIfExists(target.toPath())
           java.nio.file.Files.createSymbolicLink(target.toPath(), java.nio.file.Paths.get(entry.linkName))
         }
@@ -75,9 +75,9 @@ object SnapshotExtractor {
   private fun stampExecAttribute(files: List<String>) {
     if (files.isEmpty()) return
     try {
-      // 参数数组直传（不经 shell），文件名里的引号/元字符不会被解释。
+      // Args pass straight through (no shell), so quotes/metacharacters in filenames are not interpreted.
       val base = listOf("/system/bin/setfattr", "-n", "security.android.exec", "-v", "1")
-      // 并发批次（每批最多 64 个），避免一次 spawn 过多进程。
+      // Concurrent batches (max 64 per batch) avoid spawning too many processes at once.
       files.chunked(64).forEach { batch ->
         val procs = batch.map { f -> ProcessBuilder(base + f).redirectErrorStream(true).start() }
         for (p in procs) {

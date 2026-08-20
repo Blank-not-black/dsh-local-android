@@ -1,5 +1,5 @@
-# PR Gate — dsh-mobile-apk：静态扫描 + Kotlin 编译门禁 + PR 规范检查
-# 发布门禁仍在本地 build-release.ps1；此处只拦低级错误与规范问题。
+# PR Gate — dsh-mobile-apk: static scan + Kotlin compile gate + PR spec checks
+# Release gating still lives in the local build-release.ps1; this only blocks low-level errors and spec issues.
 name: PR Gate
 
 on:
@@ -37,7 +37,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      # Gradle 缓存加速：依赖/构建缓存跨运行复用（首次全量，之后增量）
+      # Gradle cache acceleration: dependency/build caches reused across runs (full on first, incremental after)
       - uses: gradle/actions/setup-gradle@v4
       - name: 确保 Android SDK platform 36
         run: |

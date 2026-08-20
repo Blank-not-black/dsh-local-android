@@ -15,7 +15,9 @@ android {
     // wrappers); 34 keeps native exec working on Android 15/16 devices.
     targetSdk = 34
     versionCode = 18
-    versionName = "0.12.4"
+    // Snapshot builds append a suffix (e.g. -SN-1-RC8) via -PversionNameSuffix; release builds pass none.
+    val snapshotSuffix = providers.gradleProperty("versionNameSuffix").getOrElse("")
+    versionName = "0.12.4" + snapshotSuffix
     buildConfigField("String", "TERMUX_VERSION", "\"0.118.3\"")
   }
 
@@ -35,7 +37,7 @@ android {
   }
 
   lint {
-    // 离线环境无 lint-gradle 依赖缓存（国内网络）；lint 非发布关键路径。
+    // Offline environments lack the lint-gradle dependency cache (CN networks); lint is not on the release-critical path.
     checkReleaseBuilds = false
     abortOnError = false
   }
@@ -49,7 +51,7 @@ android {
   }
 }
 
-// 运行时快照来自 GitHub Releases（大文件不入库）；缺失时构建失败并给出获取指引。
+// The runtime snapshot comes from GitHub Releases (large files are not committed); the build fails with fetch guidance when it is missing.
 tasks.whenTaskAdded {
   if (name == "mergeDebugAssets" || name == "mergeReleaseAssets") {
     doFirst {
