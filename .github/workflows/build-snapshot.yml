@@ -64,7 +64,9 @@ jobs:
           yes | sudo "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+: tsdown loads tsdown.config.ts via native TS (Node 20 falls
+          # back to the optional `unrun` loader, which npm ci does not install).
+          node-version: 22
 
       # ---- 版本号：build.gradle.kts 基础值 + 快照后缀 ----
       - name: 版本号
