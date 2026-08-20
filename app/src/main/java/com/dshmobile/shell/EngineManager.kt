@@ -475,6 +475,17 @@ class EngineManager(private val context: Context, private val pickToken: String?
    */
   fun shellEnv(): Map<String, String> {
     val preload = File(usrDir, "lib/libtermux-exec-ld-preload.so")
+    // Termux 包编译期写死的证书路径（/data/data/com.termux/...）在 PREFIX
+    // 重定位后失效；relocate-snapshot.py 不重写 ELF，功能路径由环境变量
+    // 兜底——curl/wget/git 的 https CA 校验依赖（v0.12.3-FX-2）。
+    val cert = File(usrDir, "etc/tls/cert.pem").takeIf { it.exists() }
+    val certEnv = if (cert != null) {
+      mapOf(
+        "SSL_CERT_FILE" to cert.absolutePath,
+        "CURL_CA_BUNDLE" to cert.absolutePath,
+        "GIT_SSL_CAINFO" to cert.absolutePath,
+      )
+    } else emptyMap()
     return mapOf(
       "PATH" to (usrDir.absolutePath + "/bin:/system/bin"),
       "LD_LIBRARY_PATH" to (usrDir.absolutePath + "/lib"),
@@ -504,7 +515,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
       "DSH_PICK_TOKEN" to (pickToken ?: ""),
       // 视觉后端（Qwen-VL）API key：从私有文件读取，避免硬编码进源码。
       "DASHSCOPE_API_KEY" to (File(context.filesDir, "dashscope-key.txt").takeIf { it.exists() }?.readText()?.trim() ?: ""),
-    )
+    ) + certEnv
   }
 
   companion object {
