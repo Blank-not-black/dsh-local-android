@@ -24,11 +24,11 @@ class EngineService : Service() {
 
   override fun onCreate() {
     super.onCreate()
-    // C1：复用进程级 pick token（看门狗重启引擎后鉴权不失效、不空放行）。
+    // C1: reuse the process-level pick token (auth survives watchdog engine restarts, never blank-allow).
     engineManager = EngineManager(this, EngineManager.ensurePickToken())
     instance = this
     startForeground(NOTIFICATION_ID, buildNotification())
-    // 开发者日志开关已开：常驻收集（logcat + engine.log → dshdata/log/ 按天）。
+    // Dev log toggle on: persistent collection (logcat + engine.log → dshdata/log/, daily).
     if (MainActivity.DevLogPrefs.isEnabled(this)) LogCollector.start(this)
   }
 
@@ -43,12 +43,12 @@ class EngineService : Service() {
     watchdog?.shutdownNow()
     watchdog = null
     if (instance === this) instance = null
-    // 服务退出即停止日志收集（进程内幂等单例；开关关时也已停）。
+    // Log collection stops when the service exits (in-process idempotent singleton; also stopped when the toggle is off).
     LogCollector.stop()
     super.onDestroy()
   }
 
-  /** 用户请求关闭：停看门狗 + 停引擎（不自动重启）。 */
+  /** User-requested shutdown: stop the watchdog + engine (no auto-restart). */
   fun requestShutdown() {
     userShutdown = true
     watchdog?.shutdownNow()
@@ -94,10 +94,10 @@ class EngineService : Service() {
 
   companion object {
     private const val NOTIFICATION_ID = 2
-    /** 用户请求关闭标记：关闭后看门狗/onStartCommand 不再自动拉起引擎，需用户手动启动。 */
+    /** User-requested shutdown flag: after shutdown the watchdog/onStartCommand no longer raises the engine; the user must start it manually. */
     @Volatile
     var userShutdown = false
-    /** 当前运行的服务实例（MainActivity「关闭」经 requestShutdown 停看门狗）。 */
+    /** Currently running service instance (MainActivity's "Shut down" stops the watchdog via requestShutdown). */
     @Volatile
     var instance: EngineService? = null
   }

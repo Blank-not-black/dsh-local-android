@@ -54,24 +54,24 @@ class MainActivity : ComponentActivity() {
   private var webImeBottomInset = 0
   /** Coalesces rapid IME animation callbacks into one WebView evaluation per UI turn. */
   private var webInsetsPushScheduled = false
-  /** 目录选择桥鉴权 token（进程级共享：MainActivity 重建/看门狗重启不更换，
-   *  与引擎 env 的 DSH_PICK_TOKEN 始终一致；C1 修复）。 */
+  /** Directory-picker bridge auth token (process-level shared: unchanged across MainActivity rebuilds
+   *  and watchdog restarts, always matching the engine env DSH_PICK_TOKEN; C1 fix). */
   private val pickToken: String = EngineManager.ensurePickToken()
   private lateinit var engineStatus: TextView
   private lateinit var progressText: TextView
-  /** 启动/测试双态界面（v0.11.0）：解压进度条、崩溃横幅、engine.log 摘要。 */
+  /** Startup/test dual-state UI (v0.11.0): extraction progress bar, crash banner, engine.log summary. */
   private lateinit var progressBar: ProgressBar
   private lateinit var crashBanner: TextView
   private lateinit var logSummary: TextView
-  /** 崩溃标记：记录未捕获异常摘要，下次启动测试界面提示（不吞异常）。 */
+  /** Crash marker: records an uncaught-exception summary shown on the next startup's test screen (exceptions are never swallowed). */
   private var crashInfo: String? = null
-  /** 重启引擎 in-flight 守卫（防连点双杀双启）。 */
+  /** Engine-restart in-flight guard (prevents double-kill/double-start from rapid taps). */
   private val engineRestarting = java.util.concurrent.atomic.AtomicBoolean(false)
-  /** 用户主动关闭后，前台监控与任何尚未结束的启动线程不得重新展示 WebUI。 */
+  /** After the user explicitly shuts down, the foreground monitor and any pending startup thread must not re-show the WebUI. */
   @Volatile
   private var userClosedEngine = false
-  /** 前台引擎监控：3s 轮询探测，down→测试界面、up→恢复 WebUI
-   *  （"设置里杀进程/引擎崩溃回退测试界面"的落地；watchdog 负责恢复）。 */
+  /** Foreground engine monitor: 3s polling probe — down → test screen, up → WebUI restored
+   *  (implements "kill the process in Settings / engine crash falls back to the test screen"; the watchdog restores the engine). */
   private val engineMonitorHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private val engineMonitorRunnable = object : Runnable {
     override fun run() {
@@ -92,11 +92,11 @@ class MainActivity : ComponentActivity() {
       }.start()
     }
   }
-  // —— WebView 渲染进程冻结看门狗（2026-08-18，issue #36：荣耀 MagicUI 6.1 /
-  // Android 12 仍卡「Loading plugins…」且页面无诊断层 = 渲染进程 JS 主线程冻结，
-  // 页面内看门狗定时器也跑不动）。evaluateJavascript 的 JS 在渲染进程执行，App
-  // 主线程不受影响：主线程周期发 JS 心跳，回调不再返回即判渲染进程失活 →
-  // Toast 提示 + 自动 reload 一次 + 记日志。 ——
+  // —— WebView renderer-freeze watchdog (2026-08-18, issue #36: Honor MagicUI 6.1 / Android 12
+  // still stuck on "Loading plugins…" with no diagnostics layer = the renderer's JS main thread froze,
+  // so in-page watchdog timers can't run either). evaluateJavascript runs in the renderer while the app
+  // main thread is unaffected: the main thread pings a JS heartbeat; when the callback stops returning,
+  // the renderer is judged dead → Toast + one auto-reload + log. ——
   private val freezeHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private var jsAckAt = System.currentTimeMillis()
   private var pageLoadedAt = System.currentTimeMillis()
@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
   /** Invalidates stale startup work when the user closes or explicitly restarts the engine. */
   private val engineFlowGeneration = java.util.concurrent.atomic.AtomicLong(0)
   private var pendingPickCallback: String? = null
-  /** M3：上次 pick 因缺权限挂起（onResume 续启/结算的依据）。 */
+  /** M3: last pick was suspended for a missing permission (basis for onResume resume/settle). */
   private var pendingPermissionRequest = false
   private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
@@ -167,8 +167,8 @@ class MainActivity : ComponentActivity() {
           "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callback) + ", " + jsString(path) + ")", null,
         )
       } else {
-        // 用户取消：回传 null，让引擎侧 pick() 以取消结算（否则页面轮询
-        // 会继续拿到同一请求反复唤起选择器——设备实证的 picker 堆叠）。
+        // User cancelled: return null so the engine-side pick() settles as cancelled (otherwise the
+        // page polling keeps pulling the same request and re-opens the picker repeatedly — device-observed picker stacking).
         webView.evaluateJavascript(
           "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callback) + ", null)", null,
         )
@@ -176,9 +176,10 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** H2：壳侧 pick 占槽 TTL（与引擎侧 5 分钟 TTL 对齐）——SAF 结果永远
-   *  不回来（系统设置页停留/进程被杀恢复/缺权限路径）时自动清槽并按取消
-   *  结算，避免后续目录选择被单槽永久拒绝。 */
+  /** H2: shell-side pick slot TTL (aligned with the engine-side 5-minute TTL) — when the SAF result
+   *  never comes back (stuck on a system settings page / process killed and restored / missing-permission
+   *  path), the slot is cleared automatically and settled as cancelled, so later directory picks are
+   *  never blocked by a permanently occupied single slot. */
   private val pickTtlHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private val pickTtlRunnable = Runnable {
     val callback = pendingPickCallback
@@ -198,15 +199,15 @@ class MainActivity : ComponentActivity() {
     private const val TAG = "dsh-shell"
     const val ACTION_UPDATE = "com.dsharnessmobile.shell.action.UPDATE"
 
-    /** 导出文件大小上限（防恶意/异常大文件 OOM）。 */
+    /** Export file size cap (prevents OOM from malicious/abnormally large files). */
     const val MAX_DOWNLOAD_BYTES = 200L * 1024 * 1024
 
-    /** 会话日志导出端点路径（WebView 内双拦截识别用）。 */
+    /** Session-log export endpoint path (recognized by the dual interception inside the WebView). */
     const val SESSION_EXPORT_PATH = "/api/session.export"
   }
 
-  // 文件上传（<input type=file> → WebView onShowFileChooser → 系统文件选择器）。
-  // 与目录选择（directoryPicker，工作区用）分离：多选、任意类型。
+  // File upload (<input type=file> → WebView onShowFileChooser → system file picker).
+  // Distinct from directory picking (directoryPicker, for the workspace); multi-select, any type.
   private val filePicker =
     registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
       val callback = filePathCallback
@@ -216,8 +217,9 @@ class MainActivity : ComponentActivity() {
       }
     }
 
-  // 图片选择：ACTION_PICK 走系统相册（tap 即选），区别于 ACTION_GET_CONTENT 的文件管理器。
-  // accept 为图片类型时必须走相册，否则系统会进「最近/大型文件」的文档界面（需要长按才能选）。
+  // Image picking: ACTION_PICK opens the system gallery (tap-to-select), unlike the ACTION_GET_CONTENT
+  // file manager. For image accept types the gallery is mandatory, otherwise the system opens the
+  // "Recent/Large files" document UI where long-press is required to select.
   private val imagePicker =
     registerForActivityResult(PickImageContract()) { uri ->
       val callback = filePathCallback
@@ -228,11 +230,12 @@ class MainActivity : ComponentActivity() {
     }
 
   private val notificationPermission =
-    registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* test channel only */ }
+    registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* notification permission (exports/engine status channel) */ }
 
-  /** bridge 图片选择：原生读图 → base64 data URL → window.__dshBridge.onImagePicked。
-   *  华为 WebView（Chromium 114）的 onShowFileChooser 收到 content:// Uri 后不触发
-   *  input change，改由原生层读字节直接回传 JS，彻底绕开 WebView 文件选择器。 */
+  /** Bridge image picking: native read → base64 data URL → window.__dshBridge.onImagePicked.
+   *  Huawei WebViews (Chromium 114) don't fire input change when onShowFileChooser receives a
+   *  content:// Uri, so the native layer reads the bytes and hands them to JS directly, bypassing
+   *  the WebView file picker entirely. */
   private var pendingImagePickCallback: String? = null
 
   private val imagePickerBridge =
@@ -281,7 +284,7 @@ class MainActivity : ComponentActivity() {
     imagePickerBridge.launch(Unit)
   }
 
-  /** 字体大小持久化读取（设置 → 通用设置 滑块；默认 100）。 */
+  /** Persisted font-size read (Settings → General slider; default 100). */
   private fun textZoomPrefs(): Int {
     return try {
       getSharedPreferences("dsh_settings", MODE_PRIVATE).getInt("text_zoom", 100)
@@ -290,10 +293,10 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 字体大小设置（WebView textZoom）+ 持久化，重启/缓存刷新后仍生效。 */
+  /** Font-size setting (WebView textZoom) + persistence; survives restarts and cache refreshes. */
   private fun setTextZoomPersisted(percent: Int) {
     val p = percent.coerceIn(50, 200)
-    // JS 桥在 JavaBridge 线程调用；WebView 方法必须切回主线程。
+    // The JS bridge runs on the JavaBridge thread; WebView calls must hop back to the main thread.
     runOnUiThread { webView.settings.textZoom = p }
     try {
       getSharedPreferences("dsh_settings", MODE_PRIVATE).edit().putInt("text_zoom", p).apply()
@@ -304,8 +307,8 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 原生剪贴板写入（WebView 的 Clipboard API 在 Android 上被拒
-   * NotAllowedError: Write permission denied，页面回退到本桥）。
+   * Native clipboard write (the WebView Clipboard API is rejected on Android with
+   * NotAllowedError: Write permission denied, so the page falls back to this bridge).
    */
   private fun copyTextNative(text: String): Boolean {
     return try {
@@ -319,7 +322,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 从 content Uri 读取显示名（MediaStore DISPLAY_NAME）。 */
+  /** Read the display name from a content Uri (MediaStore DISPLAY_NAME). */
   private fun queryImageName(uri: Uri): String? {
     return try {
       contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
@@ -329,7 +332,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** ACTION_PICK 图片选择契约：打开系统相册，tap 即返回单个图片 Uri。 */
+  /** ACTION_PICK image-picking contract: opens the system gallery; one tap returns a single image Uri. */
   private class PickImageContract : ActivityResultContract<Unit, Uri?>() {
     override fun createIntent(context: Context, input: Unit): Intent {
       return Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
@@ -343,20 +346,20 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    // 崩溃标记：进程级未捕获异常写入 filesDir/.crashed（下次启动测试界面
-    // 提示），随后交回默认 handler——只记录，不吞异常、不阻止崩溃。
+    // Crash marker: process-level uncaught exceptions write filesDir/.crashed (surfaced on the next
+    // startup's test screen), then the default handler takes over — record only, never swallow or block.
     installCrashMarker()
     val crashFile = File(filesDir, ".crashed")
     if (crashFile.exists()) {
       crashInfo = try { crashFile.readText() } catch (_: Exception) { null }
       crashFile.delete()
     }
-    // 开发者日志开关已开（上次会话）：进程启动即恢复收集。
+    // Dev log toggle was on last session: resume collection at process start.
     if (DevLogPrefs.isEnabled(this)) {
       LogCollector.start(this)
       LogCollector.log("dsh-shell", "app onCreate (dev log on)")
     }
-    // 沉浸式：内容延伸到系统栏区域（状态栏常态收起，边缘滑动临时呼出）。
+    // Immersive: content extends into the system-bar area (status bar normally hidden, edge-swipe temporarily reveals it).
     WindowCompat.setDecorFitsSystemWindows(window, false)
     applyImmersive(immersivePrefs())
     val root = FrameLayout(this)
@@ -387,22 +390,24 @@ class MainActivity : ComponentActivity() {
 
   override fun onResume() {
     super.onResume()
-    // 前台引擎监控：引擎被杀/崩溃时自动回退测试界面，恢复后回 WebUI。
+    // Foreground engine monitor: falls back to the test screen when the engine is killed/crashed, back to the WebUI on recovery.
     if (!userClosedEngine) {
       engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
       engineMonitorHandler.post(engineMonitorRunnable)
     }
     // Back from the directory picker / Termux: re-route if the engine came up.
-    // 仅当 WebView 未展示（引导页/首次启动）时才探测并重路由；相册/文件选择器
-    // 返回时 WebView 已可见，探测超时会误触发 showWeb→reload，导致 JS 状态丢失。
+    // Probe and re-route only while the WebView is hidden (guide page / first start); when returning
+    // from the gallery/file picker the WebView is already visible, and a probe timeout would wrongly
+    // trigger showWeb→reload, losing JS state.
     if (!userClosedEngine && webView.visibility != View.VISIBLE && !EngineProbe.check().optBoolean("running", false)) startEngineFlow()
-    // 主题补推：从系统设置/SAF 返回时系统主题可能已变（兜底桥时序覆盖）。
+    // Theme re-push: the system theme may have changed while returning from Settings/SAF (fallback-bridge timing coverage).
     if (::webView.isInitialized) {
       pushSystemDark(webView)
       pushWebInsets()
     }
-    // M3：从系统授权页返回——上次 pick 因缺权限挂起时，已授权则自动续启
-    // SAF，仍拒绝则按取消结算（引擎请求不挂到 5 分钟 TTL）。
+    // M3: returning from the system authorization page — when the last pick was suspended for a
+    // missing permission, resume SAF automatically if granted, otherwise settle as cancelled (the
+    // engine request never hangs until the 5-minute TTL).
     if (pendingPickCallback != null) {
       val granted = android.os.Build.VERSION.SDK_INT >= 30 &&
         android.os.Environment.isExternalStorageManager()
@@ -427,13 +432,13 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 窗口重新获得焦点时重应用沉浸式（系统栏 flag 会随焦点变化被重置）。 */
+  /** Re-apply immersive mode when the window regains focus (system-bar flags reset on focus changes). */
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
     if (hasFocus) applyImmersive(immersivePrefs())
   }
 
-  /** 沉浸式状态栏持久化读取（设置 → 通用设置 开关；默认收起）。 */
+  /** Persisted immersive-status-bar read (Settings → General toggle; default hidden). */
   private fun immersivePrefs(): Boolean {
     return try {
       getSharedPreferences("dsh_settings", MODE_PRIVATE).getBoolean("immersive_mode", true)
@@ -442,7 +447,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 状态栏常态收起（沉浸式）：隐藏系统栏，边缘滑动临时呼出后自动收起。 */
+  /** Status bar normally hidden (immersive): system bars hidden; edge-swipe shows them transiently, then auto-hides. */
   private fun applyImmersive(enabled: Boolean) {
     try {
       if (Build.VERSION.SDK_INT >= 30) {
@@ -470,7 +475,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 沉浸式开关（JS 桥）：应用 + 持久化。 */
+  /** Immersive toggle (JS bridge): apply + persist. */
   private fun setImmersivePersisted(enabled: Boolean) {
     runOnUiThread { applyImmersive(enabled) }
     try {
@@ -486,7 +491,7 @@ class MainActivity : ComponentActivity() {
     engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
     freezeHandler.removeCallbacks(freezeRunnable)
     pickTtlHandler.removeCallbacks(pickTtlRunnable)
-    // 兜底释放：Activity 销毁时清掉可能仍持有的屏幕常亮锁。
+    // Fallback release: clear any still-held screen wake lock on Activity destroy.
     try {
       if (screenWakeLock != null) {
         screenWakeLock?.release()
@@ -512,8 +517,8 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun configureWebView() {
-    // WebView 远程调试（debug 构建）：真机/模拟器 CDP 自动化验证 UI 行为。
-    // AGP 8 默认不生成 BuildConfig，用 debuggable 标志判断。
+    // WebView remote debugging (debug builds): CDP automation on device/emulator validates UI behavior.
+    // AGP 8 doesn't generate BuildConfig by default, so use the debuggable flag instead.
     val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
     if (debuggable) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
     webView.settings.apply {
@@ -521,13 +526,13 @@ class MainActivity : ComponentActivity() {
       domStorageEnabled = true
       allowFileAccess = false
       mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-      // 禁用 HTTP 缓存：杜绝 WebView 命中旧 index/旧 bundle 造成"卡 loading 且
-      // 无诊断层"（缓存页里没有页面看门狗；荣耀/MagicUI 实测类问题）。
+      // Disable HTTP cache: prevents the WebView from serving a stale index/bundle that leaves
+      // "stuck loading with no diagnostics" (cached pages carry no page watchdog; Honor/MagicUI-measured issues).
       cacheMode = WebSettings.LOAD_NO_CACHE
-      // 字体大小（设置 → 通用设置）：从本地持久化恢复，不依赖页面缓存。
+      // Font size (Settings → General): restored from local persistence, independent of the page cache.
       textZoom = textZoomPrefs().coerceIn(50, 200)
-      // prefers-color-scheme 跟随系统深色（某些厂商 WebView 默认不跟随；
-      // FORCE_DARK_AUTO 让 media query 反映系统深浅，dsh 的"跟随系统"主题依赖它）。
+      // prefers-color-scheme follows the system dark mode (some vendor WebViews don't by default;
+      // FORCE_DARK_AUTO makes the media query reflect system light/dark, which dsh's "follow system" theme relies on).
       if (Build.VERSION.SDK_INT >= 29) {
         @Suppress("DEPRECATION")
         forceDark = WebSettings.FORCE_DARK_AUTO
@@ -536,16 +541,17 @@ class MainActivity : ComponentActivity() {
     webView.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()
-        // 会话日志导出（issue apk#6 + 403 修复）：浏览器导航带 Origin:null /
-        // sec-fetch-site 标记，会被 dsh 的 /api browser-trust fence 拒绝
-        // （403 forbidden，防 DNS rebinding/跨站）。改为 app 内下载：
-        // HttpURLConnection 无浏览器标记 → fence 放行（MuMu 实测验证）。
+        // Session-log export (issue apk#6 + 403 fix): browser navigation carries Origin:null /
+        // sec-fetch-site markers and gets rejected by dsh's /api browser-trust fence (403 forbidden,
+        // anti DNS-rebinding/cross-site). Route through in-app download instead:
+        // HttpURLConnection has no browser markers → the fence permits it (verified on MuMu).
         if (isSessionExport(url, request.method)) {
           downloadToDownloads(url, null)
           return true
         }
-        // 只允许引擎同源页面留在 WebView（特权桥 + 下载能力仅对引擎可信）；
-        // 外部链接交给系统浏览器，防止不可信页面获得桥能力（社工/通知轰炸/任意下载）。
+        // Only engine-origin pages may stay in the WebView (the privileged bridge + download capability
+        // are engine-trusted only); external links go to the system browser, so untrusted pages can't
+        // gain bridge powers (social engineering / notification bombing / arbitrary downloads).
         if (isEngineSource(url)) {
           view.loadUrl(url)
           return true
@@ -565,11 +571,11 @@ class MainActivity : ComponentActivity() {
         if (isEngineSource(url) && !userClosedEngine) startFreezeWatchdog()
       }
     }
-    // WebView 下载：会话日志导出（/api/session.export）与其余引擎源下载
-    // 统一走 app 内下载（优先 Documents/dshdata/exports，未授权回退
-    // MediaStore.Downloads）——浏览器导航带 Origin:null 会被 dsh
-    // 的 /api browser-trust fence 拒绝（403），app 内 HttpURLConnection
-    // 无浏览器标记 → fence 放行（403 修复路径，见 downloadToDownloads）。
+    // WebView downloads: session-log export (/api/session.export) and other engine-origin downloads
+    // all use the in-app path (Documents/dshdata/exports first, MediaStore.Downloads fallback when
+    // unauthorized) — browser navigation carries Origin:null and is rejected by dsh's /api
+    // browser-trust fence (403); the in-app HttpURLConnection has no browser markers, so the fence
+    // permits it (the 403 fix path, see downloadToDownloads).
     webView.setDownloadListener { url, _userAgent, contentDisposition, _mimeType, _contentLength ->
       downloadToDownloads(url, contentDisposition)
     }
@@ -577,8 +583,8 @@ class MainActivity : ComponentActivity() {
       override fun onShowFileChooser(
         webView: WebView, filePathCallback: ValueCallback<Array<Uri>>, fileChooserParams: FileChooserParams,
       ): Boolean {
-        // 文件上传走系统文件选择器；directoryPicker 是目录选择（工作区用），两者分离。
-        // accept="image/*" 时走图片选择器（GetContent → 相册），否则走文档选择器。
+        // File upload uses the system file picker; directoryPicker is for directory selection (workspace) — the two stay separate.
+        // accept="image/*" routes to the image picker (GetContent → gallery), otherwise the document picker.
         this@MainActivity.filePathCallback?.onReceiveValue(null)
         this@MainActivity.filePathCallback = filePathCallback
         val accept = fileChooserParams.acceptTypes ?: emptyArray()
@@ -592,8 +598,9 @@ class MainActivity : ComponentActivity() {
       }
 
       override fun onJsAlert(view: WebView, url: String, message: String, result: JsResult): Boolean {
-        // L6：不静默放大社工面——超长消息截断记录；页面确认仍自动放行
-        // （移动 WebView 无原生 alert UI，confirm 阻塞会挂死页面）。
+        // L6: don't silently widen the social-engineering surface — truncate and log overlong messages;
+        // page confirmation still auto-approves (mobile WebView has no native alert UI; a blocking
+        // confirm would hang the page).
         if (message.length > 200) {
           Log.w(TAG, "js alert truncated (" + message.length + " chars): " + message.take(200))
         } else {
@@ -650,12 +657,13 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * SAF 目录选择（带 All Files Access 引导）：外部工作区要求 bash 进程能
-   * 直接访问所选真实路径；无权限时先跳系统授权页并提示页面侧重试。
+   * SAF directory pick (with All Files Access guidance): external workspaces require the bash process
+   * to reach the picked real path directly; without the permission, jump to the system grant page and
+   * prompt the page to retry.
    */
   private fun pickDirectoryWithPermissionCheck(callbackId: String) {
-    // 并发保护：已有在途选择时拒绝新请求（单槽 pendingPickCallback 会被
-    // 覆盖导致前一个引擎 pick 永不结算——P2-8）。
+    // Concurrency guard: reject new requests while one is in flight (a single slot means a second pick
+    // would overwrite pendingPickCallback and the previous engine pick would never settle — P2-8).
     if (pendingPickCallback != null) {
       webView.evaluateJavascript(
         "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", null)", null,
@@ -663,8 +671,8 @@ class MainActivity : ComponentActivity() {
       return
     }
     if (android.os.Build.VERSION.SDK_INT < 30) {
-      // Android 10 及以下无 All Files Access 模型：外部工作区不可用。
-      // 回传 null 让引擎侧 pick 以取消结算，不崩溃、不静默挂起。
+      // Android 10 and below have no All Files Access model: external workspaces unavailable.
+      // Return null so the engine-side pick settles as cancelled — no crash, no silent hang.
       webView.evaluateJavascript(
         "window.__dshBridge?.onDirectoryPicked?.(" + jsString(callbackId) + ", null)", null,
       )
@@ -678,8 +686,9 @@ class MainActivity : ComponentActivity() {
       directoryPicker.launch(null)
       return
     }
-    // M3：未授权路径也占槽 + 记挂起标记——onResume 据此在授权返回后自动
-    // 续启 SAF（或仍拒绝时按取消结算），引擎请求不再静默挂到 5 分钟 TTL。
+    // M3: the unauthorized path also occupies the slot + sets the pending flag — onResume uses it to
+    // auto-resume SAF after the grant returns (or settle as cancelled when still denied); engine requests
+    // no longer silently hang until the 5-minute TTL.
     pendingPickCallback = callbackId
     pendingPermissionRequest = true
     pickTtlHandler.removeCallbacks(pickTtlRunnable)
@@ -703,19 +712,19 @@ class MainActivity : ComponentActivity() {
       try {
         startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
       } catch (_: Exception) {
-        // 无任何可用入口：静默忽略（引擎侧会以取消结算）。
+        // No usable entry at all: silently ignore (the engine side settles as cancelled).
       }
     }
   }
 
   /**
-   * 下载引擎侧 URL 并保存为会话日志 ZIP 导出。优先直写
-   * Documents/dshdata/exports/（需 MANAGE_EXTERNAL_STORAGE）；未授权时
-   * 回退 MediaStore.Downloads。仅接受引擎同源 URL；流式写入并设大小上限。
-   * app 内 HttpURLConnection 请求无浏览器标记（Origin/sec-fetch-site），
-   * 通过 dsh 的 /api browser-trust fence（浏览器导航 403 的修复路径）。
+   * Download an engine-side URL and save it as a session-log ZIP export. Prefers direct writes to
+   * Documents/dshdata/exports/ (needs MANAGE_EXTERNAL_STORAGE); falls back to MediaStore.Downloads
+   * when unauthorized. Only engine-origin URLs accepted; streamed writes with a size cap.
+   * In-app HttpURLConnection requests carry no browser markers (Origin/sec-fetch-site), so they pass
+   * dsh's /api browser-trust fence (the fix path for browser-navigation 403s).
    */
-  /** 下载 in-flight 守卫：shouldOverrideUrlLoading 与 downloadListener 双入口去重。 */
+  /** Download in-flight guard: dedupes the shouldOverrideUrlLoading + downloadListener dual entry. */
   private val exportDownloading = java.util.concurrent.atomic.AtomicBoolean(false)
 
   private fun downloadToDownloads(url: String, contentDisposition: String?) {
@@ -765,7 +774,7 @@ class MainActivity : ComponentActivity() {
     }.start()
   }
 
-  /** 导出结果回传 WebView：UI 插件经 window.__dshExportResult 弹软件内结果框。 */
+  /** Send the export result back to the WebView: the UI plugin shows an in-app result dialog via window.__dshExportResult. */
   private fun pushExportResult(ok: Boolean, detail: String) {
     val title = if (ok) "导出成功" else "导出失败"
     val payload = "{\"ok\":" + ok + ",\"title\":" + jsString(title) + ",\"detail\":" + jsString(detail) + "}"
@@ -777,9 +786,9 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 保存导出流。已授 MANAGE_EXTERNAL_STORAGE 时直写
-   * Documents/dshdata/exports/<净化文件名>.zip（同名加 (1)，先写 .tmp 再 rename）；
-   * 未授权回退 MediaStore.Downloads。返回用于展示的实际路径。
+   * Save the export stream. With MANAGE_EXTERNAL_STORAGE, write directly to
+   * Documents/dshdata/exports/<sanitized filename>.zip (same-name gets " (1)", write .tmp then rename);
+   * otherwise fall back to MediaStore.Downloads. Returns the actual path for display.
    */
   private fun saveExportToDshData(filename: String, input: java.io.InputStream): String {
     if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
@@ -813,7 +822,7 @@ class MainActivity : ComponentActivity() {
     return "下载/$savedName"
   }
 
-  /** 同名冲突加 (1) 后缀。 */
+  /** Same-name conflicts get a " (1)" suffix so existing exports are never overwritten. */
   private fun uniqueExportFile(dir: File, name: String): File {
     val dot = name.lastIndexOf('.')
     val base = if (dot > 0) name.substring(0, dot) else name
@@ -827,7 +836,7 @@ class MainActivity : ComponentActivity() {
     return candidate
   }
 
-  /** 写入 MediaStore.Downloads（Android 10+ 免权限），流式 + 200MB 上限。 */
+  /** Write to MediaStore.Downloads (no permission on Android 10+), streamed with a 200MB cap. */
   private fun saveToDownloadsStreamed(filename: String, input: java.io.InputStream): String {
     val values = ContentValues().apply {
       put(MediaStore.Downloads.DISPLAY_NAME, filename)
@@ -859,13 +868,13 @@ class MainActivity : ComponentActivity() {
     return filename
   }
 
-  /** 文件名净化：去路径分隔符/控制字符，限长。 */
+  /** Filename sanitization: strip path separators/control chars, cap the length. */
   private fun sanitizeFilename(name: String): String {
     val cleaned = name.replace(Regex("[/\\\u0000-\u001f]"), "_").take(200)
     return if (cleaned.isBlank()) "dsh-session-export.zip" else cleaned
   }
 
-  /** 文件名：Content-Disposition 优先，退回 URL 的 sessionId，再退回固定名。 */
+  /** Filename: Content-Disposition first, then the URL's sessionId, then a fixed name. */
   private fun parseDownloadFilename(url: String, contentDisposition: String?): String {
     contentDisposition?.let { cd ->
       Regex("filename=\"?([^\";]+)\"?").find(cd)?.groupValues?.get(1)?.let { return it }
@@ -882,10 +891,10 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 调试日志导出（2026-08-16）：引擎日志 + 环境信息打包 zip。
-   *  入口：加号菜单「导出调试日志」→ androidBridge.downloadDebugLogs()。
-   *  优先写 Documents/dshdata/exports/（MANAGE_EXTERNAL_STORAGE 已授），
-   *  未授权回退 MediaStore.Downloads；结果复用导出弹窗（同 session 下载）。 */
+  /** Debug log export (2026-08-16): engine logs + environment info zipped.
+   *  Entry: plus-menu "Export debug logs" → androidBridge.downloadDebugLogs().
+   *  Prefers Documents/dshdata/exports/ (with MANAGE_EXTERNAL_STORAGE), falls back to
+   *  MediaStore.Downloads; the result reuses the export dialog (same as session downloads). */
   private val debugLogging = java.util.concurrent.atomic.AtomicBoolean(false)
 
   private fun downloadDebugLogs() {
@@ -895,7 +904,7 @@ class MainActivity : ComponentActivity() {
         val ts = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
           .format(java.util.Date())
         val filename = "dsh-debug-logs-$ts.zip"
-        // 先写私有缓存，成功后再落最终位置（跨挂载只能 copy）。
+        // Write to the private cache first, then to the final destination on success (cross-mount only allows copies).
         val cacheFile = File(cacheDir, filename)
         java.util.zip.ZipOutputStream(java.io.FileOutputStream(cacheFile)).use { zos ->
           val log = File(filesDir, "engine.log")
@@ -931,7 +940,7 @@ class MainActivity : ComponentActivity() {
     }.start()
   }
 
-  /** 调试日志附带的环境信息（不含任何密钥；版本/设备/布局/插件摘要）。 */
+  /** Environment info bundled with the debug logs (no secrets; version/device/layout/plugin summary). */
   private fun buildDebugInfoText(): String {
     val sb = StringBuilder()
     sb.append("dsh-mobile debug info\n")
@@ -949,18 +958,18 @@ class MainActivity : ComponentActivity() {
     return sb.toString()
   }
 
-  /** M7：主题延迟重推 Runnable 引用（onDestroy 取消用）。 */
+  /** M7: delayed theme re-push Runnable reference (cancelled in onDestroy). */
   private var themeRetryRunnable: Runnable? = null
 
-  /** 系统深色状态推送：某些厂商 WebView 的 prefers-color-scheme 不跟随
-   *  uiMode（vivo/Android 16 实测），UI 插件经 matchMedia hook 消费此桥值
-   *  （window.__dshThemeBridge.setDark）驱动上游 system 主题。
-   *  推送时机加固（2026-08-16）：兜底桥（ui-responsive client bundle 内的
-   *  ThemeBridge）可能晚于 onPageFinished 才安装——单次推送会静默落空
-   *  （`window.__dshThemeBridge &&` 短路），主题不跟随。延迟 800ms 再推
-   *  一次覆盖该时序；onResume 亦补推（覆盖从系统设置/SAF 返回后主题变化）。
-   *  Runnable 体内 try/catch + onDestroy removeCallbacks（M7：防销毁后
-   *  迟到的 evaluateJavascript 抛主线程异常）。 */
+  /** System dark-state push: some vendor WebViews' prefers-color-scheme does not follow uiMode
+   *  (measured on vivo/Android 16), so the UI plugin consumes this bridge value via a matchMedia
+   *  hook (window.__dshThemeBridge.setDark) to drive the upstream system theme.
+   *  Push-timing hardening (2026-08-16): the fallback bridge (ThemeBridge inside the ui-responsive
+   *  client bundle) may install later than onPageFinished — a single push silently misses
+   *  (`window.__dshThemeBridge &&` short-circuits) and the theme never follows. Re-push after an
+   *  800ms delay to cover that timing; onResume also re-pushes (covers theme changes after returning
+   *  from Settings/SAF). The Runnable body try/catches and onDestroy removes the callback (M7:
+   *  a late evaluateJavascript after destroy must not throw on the main thread). */
   private fun pushSystemDark(view: android.webkit.WebView) {
     val dark = (resources.configuration.uiMode and
       android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -976,13 +985,13 @@ class MainActivity : ComponentActivity() {
             "window.__dshThemeBridge && window.__dshThemeBridge.setDark(" + dark + ")", null,
           )
         } catch (_: Exception) {
-          // 页面/WebView 已销毁：重推失败无害。
+          // Page/WebView already destroyed: a failed re-push is harmless.
         }
       }
       themeRetryRunnable = runnable
       view.postDelayed(runnable, 800)
     } catch (_: Exception) {
-      // 页面未就绪：onPageFinished 会再推一次。
+      // Page not ready: onPageFinished will push again.
     }
   }
 
@@ -1012,7 +1021,7 @@ class MainActivity : ComponentActivity() {
         null,
       )
     } catch (_: Exception) {
-      // 页面/WebView 尚未就绪：onPageFinished 会补推当前缓存值。
+      // Page/WebView not ready yet: onPageFinished re-pushes the cached values.
     }
   }
 
@@ -1023,8 +1032,8 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 引擎源判定：精确匹配本机引擎的 scheme/host/port（防前缀欺骗，
-   * 如 127.0.0.1:30800 或 127.0.0.1:3080.evil.com 误判为引擎源）。
+   * Engine-origin check: exact scheme/host/port match against the local engine (prevents prefix
+   * spoofing — e.g. 127.0.0.1:30800 or 127.0.0.1:3080.evil.com must not count as the engine source).
    */
   private fun isEngineSource(url: String): Boolean {
     return try {
@@ -1036,34 +1045,34 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 命中判定：引擎源 + 会话导出路径 + GET（HEAD 是前端预检，不得触发跳转）。 */
+  /** Hit check: engine source + session-export path + GET (HEAD is a frontend preflight and must not trigger a redirect). */
   private fun isSessionExport(url: String, method: String): Boolean {
     return method == "GET" && isEngineSource(url) && url.contains(SESSION_EXPORT_PATH)
   }
 
   /**
-   * 原子防重放的外部浏览器打开（非导出外链）。尽力而为：启动失败时
-   * 静默（调用方不读返回值），不再有 MediaStore 回退契约——回退仅
-   * 存在于导出路径（downloadToDownloads 内）。
+   * Atomic, replay-guarded external-browser open (non-export external links). Best-effort: failures
+   * are silent (callers ignore the return value); there is no MediaStore fallback contract here — the
+   * fallback lives only on the export path (inside downloadToDownloads).
    */
   private val exportLaunching = java.util.concurrent.atomic.AtomicBoolean(false)
 
   private fun openInExternalBrowser(uri: android.net.Uri): Boolean {
-    if (!exportLaunching.compareAndSet(false, true)) return true // 已在途：吞掉重复触发
+    if (!exportLaunching.compareAndSet(false, true)) return true // already in flight: swallow duplicate triggers
     return try {
       startActivity(Intent(Intent.ACTION_VIEW, uri))
       true
     } catch (_: Exception) {
-      // 无浏览器可处理：回退 MediaStore 下载路径
+      // No browser can handle it: fall back to the MediaStore download path
       false
     } finally {
       exportLaunching.set(false)
     }
   }
 
-  /** 屏幕常亮 WakeLock（JS 桥 keepScreenOn）。单例字段持有 + 成对
-   *  acquire/release：旧实现每次调用 newWakeLock，新实例 isHeld 恒 false，
-   *  关闭路径永不 release（Review 2026-08-18 实锤的锁泄漏）。 */
+  /** Screen-on WakeLock (JS bridge keepScreenOn). Held by a singleton field with paired
+   *  acquire/release: the old implementation called newWakeLock per invocation, so a fresh instance
+   *  always had isHeld=false and the release path never fired (confirmed lock leak, Review 2026-08-18). */
   private var screenWakeLock: PowerManager.WakeLock? = null
 
   private fun keepScreenOn(enable: Boolean) {
@@ -1110,97 +1119,177 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun buildGuideView(): LinearLayout {
-    val density = resources.displayMetrics.density
-    val pad = (24 * density).toInt()
-    val guide = LinearLayout(this).apply {
+    val ctx = this
+    fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+    fun sp(v: Float) = v * resources.displayMetrics.scaledDensity
+
+    val guide = LinearLayout(ctx).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(pad, pad, pad, pad)
+      setPadding(dp(24f), dp(24f), dp(24f), dp(24f))
       gravity = android.view.Gravity.CENTER
       visibility = View.GONE
     }
-    // logo + 标题：启动/测试双态界面的固定头部。
-    val icon = ImageView(this).apply {
+    // 1. 品牌区(顶部,克制)
+    val brandRow = LinearLayout(ctx).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = android.view.Gravity.CENTER
+      val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+      lp.setMargins(0, 0, 0, dp(40f))
+      layoutParams = lp
+    }
+    val icon = ImageView(ctx).apply {
       setImageResource(R.mipmap.ic_launcher)
-      layoutParams = LinearLayout.LayoutParams((64 * density).toInt(), (64 * density).toInt())
-    }
-    val title = TextView(this).apply {
-      text = "DeepCode"
-      textSize = 20f
-      setPadding(0, (12 * density).toInt(), 0, (4 * density).toInt())
-      gravity = android.view.Gravity.CENTER
-    }
-    // 上次异常退出横幅（崩溃标记存在时显示）。
-    crashBanner = TextView(this).apply {
-      textSize = 12f
-      setTextColor(0xFFF85149.toInt())
-      setPadding(0, (6 * density).toInt(), 0, (10 * density).toInt())
-      gravity = android.view.Gravity.CENTER
-      visibility = View.GONE
-    }
-    engineStatus = TextView(this).apply { textSize = 16f; setPadding(0, 0, 0, pad); gravity = android.view.Gravity.CENTER }
-    // 解压/更新进度条（仅快照刷新时可见）。
-    progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-      visibility = View.GONE
       layoutParams = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT, (6 * density).toInt(),
+        resources.getDimensionPixelSize(R.dimen.ds_logo_size),
+        resources.getDimensionPixelSize(R.dimen.ds_logo_size),
       )
     }
-    progressText = TextView(this).apply {
-      textSize = 13f
-      setPadding(0, (8 * density).toInt(), 0, pad)
+    val title = TextView(ctx).apply {
+      text = "DeepCode"
+      textSize = sp(20f)
+      setTextColor(getColor(R.color.ds_text_primary))
+      setPadding(dp(10f), 0, 0, 0)
+      typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+      gravity = android.view.Gravity.CENTER_VERTICAL
+    }
+    brandRow.addView(icon)
+    brandRow.addView(title)
+    guide.addView(brandRow)
+
+    // 2. 状态卡(surface 卡片,圆角 16)
+    val card = LinearLayout(ctx).apply {
+      orientation = LinearLayout.VERTICAL
+      elevation = dp(1f).toFloat()
+      setPadding(
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+        resources.getDimensionPixelSize(R.dimen.ds_space_24),
+      )
+      val lp = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+      )
+      lp.setMargins(0, 0, 0, resources.getDimensionPixelSize(R.dimen.ds_space_24))
+      layoutParams = lp
+    }
+    card.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+    card.clipToOutline = true
+    card.background = android.graphics.drawable.GradientDrawable().apply {
+      setColor(getColor(R.color.ds_surface))
+      cornerRadius = resources.getDimension(R.dimen.ds_radius_md)
+      setStroke(dp(1f), getColor(R.color.ds_border))
+    }
+
+    engineStatus = TextView(ctx).apply {
+      textSize = sp(16f)
+      setTextColor(getColor(R.color.ds_text_primary))
+      gravity = android.view.Gravity.CENTER
+      setPadding(0, 0, 0, dp(16f))
+    }
+
+    // 崩溃警示条
+    crashBanner = TextView(ctx).apply {
+      textSize = sp(12f)
+      setTextColor(getColor(R.color.ds_danger))
+      setPadding(0, dp(6f), 0, dp(10f))
       gravity = android.view.Gravity.CENTER
       visibility = View.GONE
     }
-    // 失败诊断：engine.log 尾部摘要（测试界面排查用）。
-    logSummary = TextView(this).apply {
-      textSize = 11f
-      setPadding(0, 0, 0, pad)
+    progressBar = ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+      visibility = View.GONE
+      progressDrawable = android.graphics.drawable.ClipDrawable(
+        android.graphics.drawable.GradientDrawable().apply {
+          setColor(getColor(R.color.ds_accent))
+          cornerRadius = resources.getDimension(R.dimen.ds_radius_full)
+        },
+        android.view.Gravity.START, android.graphics.drawable.ClipDrawable.HORIZONTAL,
+      )
+      progressBackgroundTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.ds_progress_track))
+      layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, resources.getDimensionPixelSize(R.dimen.ds_progress_height),
+      )
+    }
+
+    progressText = TextView(ctx).apply {
+      textSize = sp(13f)
+      setTextColor(getColor(R.color.ds_text_secondary))
+      setPadding(0, dp(8f), 0, dp(16f))
       gravity = android.view.Gravity.CENTER
       visibility = View.GONE
     }
-    val openConsole = Button(this).apply {
-      text = "打开控制台"
-      setOnClickListener { startActivity(Intent(this@MainActivity, ConsoleActivity::class.java)) }
+
+    logSummary = TextView(ctx).apply {
+      textSize = sp(11f)
+      setTextColor(getColor(R.color.ds_text_tertiary))
+      setPadding(0, dp(16f), 0, 0)
+      gravity = android.view.Gravity.CENTER
+      typeface = android.graphics.Typeface.MONOSPACE
+      visibility = View.GONE
     }
-    val retry = Button(this).apply {
-      text = "重试"
-      setOnClickListener { startEngineFlow() }
-    }
-    val update = Button(this).apply {
-      text = "检查运行时更新"
-      setOnClickListener {
-        UpdateManager(this@MainActivity).checkAndApply { status ->
-          runOnUiThread { engineStatus.text = status }
+
+    card.addView(engineStatus)
+    card.addView(crashBanner)
+    card.addView(progressBar)
+    card.addView(progressText)
+    card.addView(logSummary)
+    guide.addView(card)
+
+    // 3. 操作区(底部):主按钮实心 teal,次按钮幽灵
+    fun makeButton(text: String, filled: Boolean, onClick: () -> Unit): Button {
+      return Button(ctx).apply {
+        this.text = text
+        isAllCaps = false
+        textSize = sp(14f)
+        stateListAnimator = null
+        if (filled) {
+          setTextColor(getColor(R.color.ds_surface))
+          background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(getColor(R.color.ds_accent))
+            cornerRadius = resources.getDimension(R.dimen.ds_radius_sm)
+          }
+        } else {
+          setTextColor(getColor(R.color.ds_text_primary))
+          background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(android.graphics.Color.TRANSPARENT)
+            cornerRadius = resources.getDimension(R.dimen.ds_radius_sm)
+            setStroke(dp(1f), getColor(R.color.ds_border))
+          }
+        }
+        setOnClickListener {
+          animate().scaleX(0.97f).scaleY(0.97f).setDuration(80).withEndAction {
+            animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+            onClick()
+          }.start()
         }
       }
     }
     fun buttonRow(vararg buttons: Button): LinearLayout {
-      val row = LinearLayout(this).apply {
+      val row = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = android.view.Gravity.CENTER
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.setMargins(0, 0, 0, (10 * density).toInt())
-        layoutParams = lp
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
       }
       for (b in buttons) {
-        val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        blp.setMargins((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+        val blp = LinearLayout.LayoutParams(0, dp(48f), 1f)
+        blp.setMargins(dp(6f), 0, dp(6f), 0)
         row.addView(b, blp)
       }
       return row
     }
-    guide.addView(icon)
-    guide.addView(title)
-    guide.addView(crashBanner)
-    guide.addView(engineStatus)
-    guide.addView(progressBar)
-    guide.addView(progressText)
-    guide.addView(logSummary)
+    val retry = makeButton("重试", filled = true) { startEngineFlow() }
+    val openConsole = makeButton("打开控制台", filled = false) {
+      startActivity(Intent(this@MainActivity, ConsoleActivity::class.java))
+    }
+    val update = makeButton("检查运行时更新", filled = false) {
+      UpdateManager(this@MainActivity).checkAndApply { status ->
+        runOnUiThread { engineStatus.text = status }
+      }
+    }
     guide.addView(buttonRow(openConsole, retry, update))
     return guide
   }
 
-  /** 开发者选项「关闭」：停止引擎并回退到初始化（启动/测试）界面，不自动重启。 */
+  /** Dev-options "Shut down": stop the engine and fall back to the init (startup/test) screen, without auto-restart. */
   private fun shutdownToGuide() {
     userClosedEngine = true
     engineFlowGeneration.incrementAndGet()
@@ -1246,7 +1335,7 @@ class MainActivity : ComponentActivity() {
         return@Thread
       }
       if (!isCurrentEngineFlow(generation)) return@Thread
-      // 启动即有反馈：进入测试界面显示"正在启动引擎…"（不再白屏等 probe）。
+      // Immediate feedback on start: the test screen shows "Starting engine…" (no more white screen while probing).
       runOnUiThread {
         if (!isCurrentEngineFlow(generation)) return@runOnUiThread
         progressBar.visibility = View.GONE
@@ -1265,7 +1354,7 @@ class MainActivity : ComponentActivity() {
         val ok = engineManager.refreshSnapshot { done, total ->
           runOnUiThread {
             if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-            // done 是解压后字节数，total 是压缩包字节数，口径不一致；只显示已解压量。
+            // done is extracted bytes, total is the compressed archive bytes — different scales; show only the extracted amount.
             engineStatus.text = "正在更新运行时… " + done / 1024 / 1024 + " MB"
           }
         }
@@ -1364,7 +1453,7 @@ class MainActivity : ComponentActivity() {
     webView.reload()
   }
 
-  /** 进入测试界面（引擎失败/未就绪回退）：状态 + 崩溃横幅 + engine.log 摘要。 */
+  /** Enter the test screen (fallback on engine failure/not-ready): status + crash banner + engine.log summary. */
   private fun showGuide() {
     webView.visibility = View.GONE
     guideView.visibility = View.VISIBLE
@@ -1391,7 +1480,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** engine.log 尾部摘要（测试界面诊断用；缺失/不可读返回空）。 */
+  /** engine.log tail summary (test-screen diagnostics; empty when missing/unreadable). */
   private fun tailEngineLog(lines: Int): String {
     val f = File(filesDir, "engine.log")
     if (!f.exists()) return ""
@@ -1402,7 +1491,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** 进程级崩溃标记：记录未捕获异常摘要，交回默认 handler（不吞异常）。 */
+  /** Process-level crash marker: record the uncaught-exception summary, then hand back to the default handler (never swallow). */
   private fun installCrashMarker() {
     val default = Thread.getDefaultUncaughtExceptionHandler()
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -1418,9 +1507,9 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * 重启引擎服务进程（设置界面「重启引擎」）：pkill 引擎 → 重置冷却与
-   * 流程守卫 → 1s 后重新走启动流程（EngineService 看门狗亦会拉起，
-   * 进程级 CAS + 冷却保证双路径幂等）。防连点：in-flight 守卫。
+   * Restart the engine service process (Settings → "Restart engine"): pkill the engine → reset the
+   * cooldown and flow guard → re-run the start flow after 1s (the EngineService watchdog also brings
+   * it up; process-level CAS + cooldown keep the dual paths idempotent). Anti-mashing: in-flight guard.
    */
   private fun restartEngine() {
     if (!engineRestarting.compareAndSet(false, true)) return
@@ -1447,7 +1536,7 @@ class MainActivity : ComponentActivity() {
     }.start()
   }
 
-  /** 开发者日志开关持久化（私有 SharedPreferences；默认关）。 */
+  /** Dev log toggle persistence (private SharedPreferences; default off). */
   object DevLogPrefs {
     private const val PREFS = "dsh_prefs"
     private const val KEY_DEV_LOG = "dev_log_enabled"

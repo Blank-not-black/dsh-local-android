@@ -7,7 +7,7 @@ import org.json.JSONObject
 
 /**
  * JS bridge injected as window.androidBridge (protocol v1, see
- * docs/apk-shell-design.md). All methods are callable from the page; results
+ * docs/design.md). All methods are callable from the page; results
  * that arrive asynchronously are delivered back through
  * window.__dshBridge.onDirectoryPicked(callbackId, path) on the main thread.
  */
@@ -34,8 +34,8 @@ class AndroidBridge(
   @JavascriptInterface
   fun version(): String = BuildConfig.VERSION_NAME
 
-  /** 系统深色状态同步查询（H1：首帧主题桥启动时拉取真实 uiMode，
-   *  绕过厂商 WebView matchMedia 卡 light 的问题）。 */
+  /** Synchronous system-dark query (H1: the first-frame theme bridge pulls the real uiMode,
+   *  bypassing vendor WebViews whose matchMedia is stuck on light). */
   @JavascriptInterface
   fun getSystemDark(): Boolean = onGetSystemDark()
 
@@ -62,27 +62,27 @@ class AndroidBridge(
     onPickImageRequest(callbackId)
   }
 
-  /** 设置 WebView 字体缩放（textZoom，50–200）；设置 → 通用设置 滑块调用。 */
+  /** Set the WebView font scale (textZoom, 50–200); called by the Settings → General slider. */
   @JavascriptInterface
   fun setTextZoom(percent: Int) {
     onSetTextZoomRequest(percent)
   }
 
-  /** 沉浸式状态栏开关（true=状态栏常态收起）；设置 → 通用设置 调用。 */
+  /** Immersive status bar toggle (true = status bar normally hidden); called by Settings → General. */
   @JavascriptInterface
   fun setImmersiveMode(enable: Boolean) {
     onSetImmersiveRequest(enable)
   }
 
   /**
-   * 原生剪贴板写入（WebView 的 navigator.clipboard.writeText 在 Android 上
-   * 恒被拒 NotAllowedError: Write permission denied，页面 writeClipboard
-   * 失败后回退调用本桥）。返回是否写入成功。
+   * Native clipboard write (navigator.clipboard.writeText in WebView is always rejected on Android
+   * with NotAllowedError: Write permission denied, so the page falls back to this bridge after
+   * writeClipboard fails). Returns whether the write succeeded.
    */
   @JavascriptInterface
   fun copyText(text: String): Boolean = onCopyTextRequest(text)
 
-  /** 调试日志导出：引擎日志 + 环境信息打包 zip（走会话导出同款下载/弹窗链路）。 */
+  /** Debug log export: engine logs + environment info zipped (same download/dialog path as session export). */
   @JavascriptInterface
   fun downloadDebugLogs() {
     onDebugLogsRequest()
@@ -91,7 +91,7 @@ class AndroidBridge(
   /** True when the app holds All Files Access (external workspace requirement). */
   @JavascriptInterface
   fun hasAllFilesAccess(): Boolean {
-    // isExternalStorageManager 仅 API 30+ 存在；低版本无该权限模型。
+    // isExternalStorageManager exists only on API 30+; older versions have no such permission model.
     if (android.os.Build.VERSION.SDK_INT < 30) return false
     return android.os.Environment.isExternalStorageManager()
   }
@@ -102,39 +102,39 @@ class AndroidBridge(
     onAllFilesAccessRequest()
   }
 
-  /** 目录选择桥的一次性会话 token（引擎侧 pick 端点校验；null = 未启用）。 */
+  /** One-shot session token for the directory-picker bridge (validated by the engine-side pick endpoint; null = disabled). */
   @JavascriptInterface
   fun getPickToken(): String? = pickToken
 
-  /** 重启引擎服务进程：kill 引擎进程，EngineService 看门狗自动拉起。 */
+  /** Restart the engine service process: kill the engine, the EngineService watchdog brings it back. */
   @JavascriptInterface
   fun restartEngine() {
     onRestartEngine()
   }
 
-  /** 关闭 harness：停止引擎并回退到初始化（启动/测试）界面（不自动重启）。 */
+  /** Shut down the harness: stop the engine and fall back to the init (startup/test) screen (no auto-restart). */
   @JavascriptInterface
   fun shutdownToGuide() {
     onShutdownToGuide()
   }
 
-  /** 刷新 Web UI（重载当前引擎页面，issue apk#29 需求 1）。 */
+  /** Refresh the Web UI (reloads the current engine page, issue apk#29 requirement 1). */
   @JavascriptInterface
   fun reloadWebUI() {
     onReloadWebUI()
   }
 
-  /** 打开内置控制台（快照 bash 交互终端，引擎未运行时也可排查）。 */
+  /** Open the built-in console (snapshot bash interactive terminal; usable for diagnostics even when the engine is down). */
   @JavascriptInterface
   fun openConsole() {
     onOpenConsole()
   }
 
-  /** 开发者调试日志开关状态（默认关；SharedPreferences 持久化）。 */
+  /** Dev debug-log toggle state (default off; persisted via SharedPreferences). */
   @JavascriptInterface
   fun getDevLogEnabled(): Boolean = onGetDevLogEnabled()
 
-  /** 设置开发者调试日志开关；开启后按天写入 dshdata/log/。 */
+  /** Set the dev debug-log toggle; when on, logs are written daily under dshdata/log/. */
   @JavascriptInterface
   fun setDevLogEnabled(enabled: Boolean) {
     onSetDevLogEnabled(enabled)
@@ -155,7 +155,7 @@ class AndroidBridge(
         val idx = docId.indexOf(':')
         val volume = if (idx > 0) docId.substring(0, idx) else ""
         val rel = if (idx > 0) docId.substring(idx + 1) else docId
-        // M5：路径清洗——拒绝 `..` 段/绝对路径（防越界），空 rel 拒绝。
+        // M5: path sanitization — reject `..` segments/absolute paths (escape prevention); empty rel is rejected.
         if (rel.isEmpty() || rel.split("/").any { it == ".." } || rel.startsWith("/")) {
           return uri.toString()
         }

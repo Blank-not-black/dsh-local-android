@@ -6,18 +6,23 @@
 <title>dsh 控制台</title>
 <style>
   :root {
-    --bg: #0b0e14;
-    --fg: #d0d7de;
-    --dim: #8b949e;
-    --accent: #3fb950;
-    --warn: #d29922;
-    --border: #21262d;
+    --ds-bg: #0C0C0E;
+    --ds-surface: #141416;
+    --ds-border: #1AFFFFFF;
+    --ds-text-primary: #E7E7E8;
+    --ds-text-secondary: rgba(231, 231, 232, 0.55);
+    --ds-text-tertiary: rgba(231, 231, 232, 0.35);
+    --ds-accent: #2DD4BF;
+    --ds-accent-pressed: #5EEAD4;
+    --ds-danger: #F87171;
+    --ds-radius-sm: 6px;
+    --ds-radius-md: 16px;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: var(--bg);
-    color: var(--fg);
+    background: var(--ds-bg);
+    color: var(--ds-text-primary);
     font-family: "Cascadia Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
     font-size: 13px;
     display: flex;
@@ -28,57 +33,60 @@
     align-items: center;
     gap: 10px;
     padding: 6px 10px;
-    background: #10151d;
-    border-bottom: 1px solid var(--border);
+    background: var(--ds-surface);
+    border-bottom: 1px solid var(--ds-border);
     font-size: 12px;
     flex: none;
     -webkit-user-select: none;
     user-select: none;
   }
-  #statusbar .title { font-weight: 600; color: var(--fg); }
-  #statusbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
-  #statusbar .dot.ok { background: var(--accent); }
-  #statusbar .dot.err { background: #f85149; }
-  #statusbar #engineStatus { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #statusbar #consoleStatus { color: var(--dim); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #statusbar .title { font-weight: 600; color: var(--ds-text-primary); }
+  #statusbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ds-text-tertiary); flex: none; }
+  #statusbar .dot.ok { background: var(--ds-accent); }
+  #statusbar .dot.err { background: var(--ds-danger); }
+  #statusbar #engineStatus { color: var(--ds-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #statusbar #consoleStatus { color: var(--ds-text-secondary); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #output {
     flex: 1;
     overflow-y: auto;
     padding: 8px 10px;
     white-space: pre-wrap;
     word-break: break-all;
-    line-height: 1.45;
+    line-height: 1.5;
   }
-  #output .prompt { color: var(--accent); }
+  #output .prompt { color: var(--ds-accent); }
   #inputrow {
     display: flex;
     gap: 8px;
     padding: 8px 10px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--ds-border);
+    background: var(--ds-surface);
     flex: none;
   }
   #cmd {
     flex: 1;
-    background: #10151d;
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    background: var(--ds-bg);
+    color: var(--ds-text-primary);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-sm);
     padding: 8px 10px;
     font-family: inherit;
     font-size: 13px;
     outline: none;
   }
-  #cmd:focus { border-color: #388bfd; }
+  #cmd:focus { border-color: var(--ds-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ds-accent) 25%, transparent); }
   #send {
-    background: #1f6feb;
-    color: #fff;
+    background: var(--ds-accent);
+    color: #0C0C0E;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--ds-radius-sm);
     padding: 0 16px;
     font-size: 13px;
+    font-weight: 600;
     flex: none;
+    transition: transform 120ms ease;
   }
-  #send:active { background: #388bfd; }
+  #send:active { background: var(--ds-accent-pressed); transform: scale(0.97); }
 </style>
 </head>
 <body>

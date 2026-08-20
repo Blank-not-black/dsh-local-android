@@ -1,24 +1,12 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <script>
-      // Polyfill AbortSignal.any — missing in Huawei WebView (Chromium < 116).
-      if (typeof AbortSignal.any !== "function") {
-        AbortSignal.any = function (signals) {
-          var controller = new AbortController();
-          for (var i = 0; i < signals.length; i++) {
-            (function (signal) {
-              if (signal.aborted) {
-                controller.abort(signal.reason);
-              } else {
-                signal.addEventListener("abort", function () { controller.abort(signal.reason); }, { once: true });
-              }
-            })(signals[i]);
-          }
-          return controller.signal;
-        };
-      }
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>DeepSeek Harness</title>
+        <script>
       // dsh-mobile-clip-fallback-web: Android WebView rejects
       // navigator.clipboard.writeText with NotAllowedError (no permission
       // prompt). Wrap it globally so every copy path (message copy, code
@@ -59,9 +47,8 @@
           };
         } catch (e) {}
       })();
-      // dsh-mobile-immersive-max: when the Android status bar is hidden
-      // (Settings -> General -> 沉浸式状态栏), collapse the dsh conversation
-      // header so the chat area expands to the very top of the screen.
+      // dsh-mobile-immersive: reflect the Android immersive-statusbar setting
+      // as a document attribute so plugins/CSS can adapt (v0.12.4, rc8).
       (function () {
         function applyImmersiveAttr() {
           var on = false;
@@ -73,23 +60,10 @@
         window.addEventListener("storage", applyImmersiveAttr);
         try { window.__dshImmersiveApply = applyImmersiveAttr; } catch (e) {}
       })();
-
-    </script>
-
-    <style>
-      /* dsh-mobile-immersive-max: hide the conversation header bar under immersive mode. */
-      html[data-dsh-immersive="true"] .wSkVaW_header { display: none !important; }
-      html[data-dsh-immersive="true"] .wSkVaW_scrollBody { height: 100% !important; }
-    </style>
-
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>DeepCode</title>
-    <script type="module" crossorigin src="/assets/index-C-1AiF3k.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/vendor-Cjbwl5VI.js">
+    </script>    <script type="module" crossorigin src="/assets/index-CA9Bpko5.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-D22_Mp1f.js">
     <link rel="stylesheet" crossorigin href="/assets/vendor-CjyC-hUb.css">
-    <link rel="stylesheet" crossorigin href="/assets/index-CSGf6Qzd.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-BNMwCG9c.css">
   </head>
   <body>
     <div id="root"></div>

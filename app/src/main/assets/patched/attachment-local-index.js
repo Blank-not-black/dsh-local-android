@@ -5,7 +5,16 @@ import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, copyFile, link, mkdir, open, readFile, unlink } from "node:fs/promises";
-import sharp from "sharp";
+// attachment-lazy-sharp: sharp has no android runtime; load lazily so the
+// engine boots on android (image processing degrades there).
+// NOTE: must NOT `await import("sharp")` anywhere in this module — ESM resolves
+// the whole module graph at top-level await, which pulls sharp + its wasm
+// backend (@img/sharp-wasm32 → @emnapi/runtime) during load and crashes the
+// engine. Android has no sharp runtime at all, so the image pipeline degrades
+// to IMAGE_PROCESSING_UNAVAILABLE without ever touching the sharp package.
+function requireSharp() {
+  throw new AttachmentError("Image processing unavailable on this platform", "IMAGE_PROCESSING_UNAVAILABLE");
+}
 //#region lib/types/image.js
 /** Raster inspection: full decode at admission, header-only probe on verified reads. */
 const MEDIA_TYPES = {
@@ -34,7 +43,7 @@ async function imageMetadata(image) {
 */
 async function probeImage(data) {
 	try {
-		return await imageMetadata(sharp(data, {
+		return await imageMetadata(requireSharp()(data, {
 			failOn: "error",
 			limitInputPixels: false
 		}));
@@ -46,17 +55,18 @@ async function probeImage(data) {
 /**
 * Fully decode a supported raster and return its intrinsic metadata.
 * @param data - complete encoded image bytes.
-* @param maxPixels - decoded-pixel admission limit.
+* @param limits - intrinsic-dimension admission limits.
 * @returns verified format and dimensions.
 */
-async function detectImage(data, maxPixels) {
+async function detectImage(data, limits) {
 	try {
-		const image = sharp(data, {
+		const image = requireSharp()(data, {
 			failOn: "error",
 			limitInputPixels: false
 		});
 		const detected = await imageMetadata(image);
-		if (maxPixels !== void 0 && detected.width * detected.height > maxPixels) throw new AttachmentError("Image exceeds the configured decoded-pixel limit.", "IMAGE_TOO_MANY_PIXELS");
+		if (limits?.maxPixels !== void 0 && detected.width * detected.height > limits.maxPixels) throw new AttachmentError("Image exceeds the configured decoded-pixel limit.", "IMAGE_TOO_MANY_PIXELS");
+		if (limits?.maxDimension !== void 0 && Math.max(detected.width, detected.height) > limits.maxDimension) throw new AttachmentError("Image exceeds the configured per-side pixel limit.", "IMAGE_DIMENSION_TOO_LARGE");
 		await image.raw().toBuffer();
 		return detected;
 	} catch (error) {
@@ -85,9 +95,12 @@ function ensureReference(ref) {
 	if (match?.[1] === void 0) throw new AttachmentError("Attachment reference is invalid.", "INVALID_ATTACHMENT_REF");
 	return match[1];
 }
-async function inspectMetadata(data, declaredMediaType, maxPixels) {
+async function inspectMetadata(data, declaredMediaType, limits) {
 	if (data.byteLength === 0) throw new AttachmentError("Image is empty.", "INVALID_IMAGE");
-	const detected = await detectImage(data, maxPixels);
+	const detected = await detectImage(data, {
+		maxPixels: limits.maxImagePixels,
+		maxDimension: limits.maxImageDimension
+	});
 	if (detected.mediaType !== declaredMediaType) throw new AttachmentError("Declared image type does not match its bytes.", "IMAGE_TYPE_MISMATCH");
 	return {
 		...detected,
@@ -102,7 +115,7 @@ async function inspectMetadata(data, declaredMediaType, maxPixels) {
 */
 async function validateImageFile(input, limits) {
 	if (input.data.byteLength > limits.maxImageBytes) throw new AttachmentError("Image exceeds the configured byte limit.", "IMAGE_TOO_LARGE");
-	await inspectMetadata(input.data, input.mediaType, limits.maxImagePixels);
+	await inspectMetadata(input.data, input.mediaType, limits);
 }
 /**
 * Make a directory's entries durable (fsync on a read-only directory handle).
@@ -114,19 +127,11 @@ async function syncDirectory(path) {
 	/* v8 ignore next -- Windows cannot open directory handles; NTFS metadata journaling owns entry durability there. */
 	if (process.platform === "win32") return;
 	/* v8 ignore start -- Windows cannot exercise directory fsync; POSIX behavior tests enforce this peer. */
+	const handle = await open(path, constants.O_RDONLY);
 	try {
-		const handle = await open(path, constants.O_RDONLY);
-		try {
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
-	} catch (error) {
-		// Android: the app cannot open ancestor dirs above its data dir
-		// (EACCES on /data/user/0). Durability of those ancestors is the
-		// platform's concern; skip the sync rather than fail the save.
-		if (error !== null && (error.code === "EACCES" || error.code === "EPERM")) return;
-		throw error;
+		await handle.sync();
+	} finally {
+		await handle.close();
 	}
 	/* v8 ignore stop */
 }
@@ -180,7 +185,7 @@ async function ensureDurableHome(path) {
 */
 async function saveImageFile(root, input, limits) {
 	if (input.data.byteLength > limits.maxImageBytes) throw new AttachmentError("Image exceeds the configured byte limit.", "IMAGE_TOO_LARGE");
-	const metadata = await inspectMetadata(input.data, input.mediaType, limits.maxImagePixels);
+	const metadata = await inspectMetadata(input.data, input.mediaType, limits);
 	const sha256 = digest(input.data);
 	const bucket = join(root, "objects", sha256.slice(0, 2));
 	const staging = join(root, "tmp");
@@ -197,25 +202,11 @@ async function saveImageFile(root, input, limits) {
 		await handle.close();
 		handle = void 0;
 		try {
-			await link(temporary, target);
+			await link(temporary, target).catch(function (e) { if (e.code !== "EACCES" && e.code !== "EPERM" && e.code !== "ENOTSUP") throw e; /* attachment-link-eacces-fallback: Android app domain forbids link(2); fall back to copy (single-engine-process, same sha256 content). */ return copyFile(temporary, target); });
 		} catch (error) {
 			/* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
-			if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-				if (digest(new Uint8Array(await readFile(target))) !== sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
-			} else if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM" || error.code === "ENOSYS" || error.code === "EOPNOTSUPP" || error.code === "EXDEV")) {
-				// Android sepolicy blocks link(2) (Huawei/HarmonyOS observed); fall back to an exclusive copy.
-				try {
-					await copyFile(temporary, target, constants.COPYFILE_EXCL);
-				} catch (copyError) {
-					if (copyError instanceof Error && "code" in copyError && copyError.code === "EEXIST") {
-						if (digest(new Uint8Array(await readFile(target))) !== sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
-					} else {
-						throw copyError;
-					}
-				}
-			} else {
-				throw error;
-			}
+			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+			if (digest(new Uint8Array(await readFile(target))) !== sha256) throw new AttachmentError("Stored attachment failed integrity verification.", "ATTACHMENT_CORRUPT");
 		}
 		await syncDirectory(bucket);
 		await syncDirectory(join(root, "objects"));
@@ -276,13 +267,21 @@ async function readImageFile(root, ref, signal) {
 //#region lib/types/index.js
 /** Local durable attachment backend rooted below `DSH_HOME`. @module @deepseek-ai/dsh-attachment-local */
 /** Default maximum encoded bytes for one image. */
-const DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_MAX_IMAGE_BYTES = 3.5 * 1024 * 1024;
 /** Default maximum images in one prompt. */
 const DEFAULT_MAX_IMAGES_PER_MESSAGE = 20;
 /** Default maximum aggregate image bytes in one prompt. */
 const DEFAULT_MAX_MESSAGE_IMAGE_BYTES = 100 * 1024 * 1024;
 /** Default maximum intrinsic pixels for one image. */
 const DEFAULT_MAX_IMAGE_PIXELS = 4e7;
+/**
+* Default maximum intrinsic width and height for one image. Deployed model
+* routes reject any request whose history carries an image with a side above
+* 2000px once the request holds many images, and an admitted image rides
+* every later request of its session, so admission refuses at the same line
+* to keep the durable history streamable.
+*/
+const DEFAULT_MAX_IMAGE_DIMENSION = 2e3;
 /** Persistent content-addressed local attachment store. */
 var LocalAttachmentStore = class extends AttachmentStore {
 	static Config = z.object({
@@ -290,7 +289,8 @@ var LocalAttachmentStore = class extends AttachmentStore {
 		maxImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_IMAGE_BYTES),
 		maxImagesPerMessage: z.number().step(1).min(1).default(20),
 		maxMessageImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_IMAGE_BYTES),
-		maxImagePixels: z.number().step(1).min(1).default(DEFAULT_MAX_IMAGE_PIXELS)
+		maxImagePixels: z.number().step(1).min(1).default(DEFAULT_MAX_IMAGE_PIXELS),
+		maxImageDimension: z.number().step(1).min(1).default(DEFAULT_MAX_IMAGE_DIMENSION)
 	});
 	/** Absolute versioned storage root. */
 	root;
@@ -299,10 +299,11 @@ var LocalAttachmentStore = class extends AttachmentStore {
 		super(ctx);
 		this.root = resolve(join(resolveDshHome(config.dshHome), "attachments", "v1"));
 		this.imageLimits = Object.freeze({
-			maxImageBytes: config.maxImageBytes ?? 5242880,
+			maxImageBytes: config.maxImageBytes ?? 3670016,
 			maxImagesPerMessage: config.maxImagesPerMessage ?? 20,
 			maxMessageImageBytes: config.maxMessageImageBytes ?? 104857600,
 			maxImagePixels: config.maxImagePixels ?? 4e7,
+			maxImageDimension: config.maxImageDimension ?? 2e3,
 			mediaTypes: Object.freeze([
 				"image/png",
 				"image/jpeg",
@@ -322,4 +323,4 @@ var LocalAttachmentStore = class extends AttachmentStore {
 	}
 };
 //#endregion
-export { DEFAULT_MAX_IMAGES_PER_MESSAGE, DEFAULT_MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_PIXELS, DEFAULT_MAX_MESSAGE_IMAGE_BYTES, LocalAttachmentStore, LocalAttachmentStore as default, detectImage, readImageFile, saveImageFile, validateImageFile };
+export { DEFAULT_MAX_IMAGES_PER_MESSAGE, DEFAULT_MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_DIMENSION, DEFAULT_MAX_IMAGE_PIXELS, DEFAULT_MAX_MESSAGE_IMAGE_BYTES, LocalAttachmentStore, LocalAttachmentStore as default, readImageFile, saveImageFile, validateImageFile };

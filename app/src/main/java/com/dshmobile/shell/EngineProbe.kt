@@ -12,7 +12,7 @@ object EngineProbe {
   /**
    * One-shot reachability probe. Safe on any thread (never the main thread).
    * @param timeoutMs connect+read budget per attempt.
-   * @returns JSON: {running: Boolean, latencyMs: Int, error?: String}
+   * @return JSON: {running: Boolean, latencyMs: Int, error?: String}
    */
   fun check(timeoutMs: Int = 800): JSONObject {
     return try {

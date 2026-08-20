@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="ds_bg">#0C0C0E</color>
+  <color name="ds_surface">#141416</color>
+  <color name="ds_border">#1AFFFFFF</color>
+  <color name="ds_text_primary">#E7E7E8</color>
+  <color name="ds_text_secondary">#8CE7E7E8</color>
+  <color name="ds_text_tertiary">#59E7E7E8</color>
+  <color name="ds_accent">#2DD4BF</color>
+  <color name="ds_accent_pressed">#5EEAD4</color>
+  <color name="ds_danger">#F87171</color>
+  <color name="ds_progress_track">#1AE7E7E8</color>
+</resources>

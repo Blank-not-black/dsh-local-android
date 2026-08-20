@@ -9,9 +9,9 @@ import org.json.JSONObject
 
 /**
  * Runtime snapshot online update (M2): fetch a manifest {url, sha256, size},
- * download the snapshot, verify, extract to usr-new, then atomically swap
- * usr → usr-old / usr-new → usr. The engine restart is handled by the
- * EngineService watchdog on the next poll.
+ * download the snapshot, verify, extract to an update-stage dir outside the
+ * live tree, then atomically swap usr → usr-old / update-stage/usr → usr.
+ * The engine restart is handled by the EngineService watchdog on the next poll.
  */
 class UpdateManager(private val context: Context) {
 
@@ -72,8 +72,9 @@ class UpdateManager(private val context: Context) {
           Runtime.getRuntime().exec(arrayOf("/system/bin/pkill", "-f", "bin.js")).waitFor()
         } catch (_: Throwable) {
         }
-        // 记录快照指纹：在线更新后与内嵌 assets 指纹区分（否则下次启动
-        // 会误判"快照过期"而重解压 assets 快照，把在线更新覆盖回出厂）。
+        // Record the snapshot fingerprint: distinguishes an online update from the embedded assets
+        // fingerprint (otherwise the next boot misjudges "snapshot stale" and re-extracts the assets
+        // snapshot, reverting the online update to factory state).
         if (expectedSha.isNotEmpty()) {
           File(context.filesDir, ".snapshot-fingerprint").writeText(expectedSha)
         }

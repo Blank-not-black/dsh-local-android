@@ -9,9 +9,10 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 
 /**
- * 内置控制台：WebView 加载 assets/console.html（终端样式 UI），
- * ConsoleSession spawn 快照 bash（env 与引擎一致）→ stdin 管道写命令、
- * 输出经 consoleBridge JS 接口回 UI。引擎未运行时也可用（排查场景）。
+ * Built-in console: a WebView loads assets/console.html (terminal-style UI) while
+ * ConsoleSession spawns the snapshot bash (env matching the engine) → commands via the stdin pipe,
+ * output returned to the UI through the consoleBridge JS interface. Works even when the engine is
+ * down (diagnostics scenarios).
  */
 class ConsoleActivity : ComponentActivity() {
 
@@ -20,10 +21,10 @@ class ConsoleActivity : ComponentActivity() {
   private val handler = android.os.Handler(android.os.Looper.getMainLooper())
   private var sessionStarted = false
 
-  /** 最近状态文案（onPageFinished 重推用；页面加载前丢失的状态补投）。 */
+  /** Last status text (re-pushed on onPageFinished; replays status lost before page load). */
   private var lastStatus: String? = null
 
-  /** 状态推送（主线程调用）。 */
+  /** Push status (main thread only). */
   private fun pushStatus(text: String) {
     webView.evaluateJavascript("window.__consoleStatus(" + jsString(text) + ")", null)
   }
@@ -45,8 +46,8 @@ class ConsoleActivity : ComponentActivity() {
         forceDark = WebSettings.FORCE_DARK_AUTO
       }
     }
-    // 页面加载完成后重推状态：bash 可能在 onStart 就绪而 console.html
-    // 的 JS 桥晚于其才定义，早到的 evaluateJavascript 会静默丢失。
+    // Re-push status after page load: bash may be ready in onStart while console.html's
+    // JS bridge is defined later — early evaluateJavascript calls are silently dropped.
     webView.webViewClient = object : android.webkit.WebViewClient() {
       override fun onPageFinished(view: android.webkit.WebView, url: String) {
         super.onPageFinished(view, url)
@@ -89,7 +90,7 @@ class ConsoleActivity : ComponentActivity() {
     super.onDestroy()
   }
 
-  /** JS 桥：命令提交 + 引擎状态查询。 */
+  /** JS bridge: command submission + engine status query. */
   inner class ConsoleBridge {
     @JavascriptInterface
     fun submit(command: String) {
