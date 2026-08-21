@@ -84,6 +84,9 @@ tasks.whenTaskAdded {
 
 dependencies {
   implementation("androidx.activity:activity-ktx:1.10.1")
+  // androidx.core: FileProvider (external-reader open, issue #52); ViewCompat/
+  // WindowInsetsCompat were previously satisfied transitively via activity-ktx.
+  implementation("androidx.core:core-ktx:1.15.0")
   implementation("org.apache.commons:commons-compress:1.28.0")
   implementation("org.tukaani:xz:1.10")
   implementation("dev.rikka.shizuku:api:13.1.5")

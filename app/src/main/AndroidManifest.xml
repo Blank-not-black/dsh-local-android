@@ -36,5 +36,17 @@
       android:exported="false"
       android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
       android:windowSoftInputMode="adjustResize" />
+
+    <!-- 外部阅读器打开文件（issue #52）：FileProvider 向 ACTION_VIEW 目标
+         授予临时读权限（应用私有目录与公共目录均需 content:// 才能跨应用）。 -->
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.fileprovider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths" />
+    </provider>
   </application>
 </manifest>

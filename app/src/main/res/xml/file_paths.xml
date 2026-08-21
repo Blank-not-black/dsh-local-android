@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径映射（issue #52）：外部阅读器打开文件需要 content://。
+     外部存储根 = /storage/emulated/0（MANAGE_EXTERNAL_STORAGE 已授，可直接读）；
+     私有目录 = filesDir/usr（引擎快照产物）与 filesDir/home（用户数据）。 -->
+<paths>
+  <external-path name="external_root" path="." />
+  <files-path name="internal_files" path="." />
+</paths>

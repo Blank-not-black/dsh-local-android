@@ -327,6 +327,35 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /**
+   * 用外部阅读器打开文件路径（issue #52）：引擎 native-path-opener 仅支持
+   * mac/win/linux，Android 上文件提及按钮会失败。路径解析：
+   * - /storage/emulated/0/...（公共目录，MANAGE_EXTERNAL_STORAGE 已授）→ FileProvider content Uri
+   * - 应用私有目录（filesDir 等）→ FileProvider content Uri
+   * - 其他（content:// 或不可读）→ false，前端回退引擎 RPC（桌面宿主行为）
+   */
+  private fun openNativePathWithReader(path: String): Boolean {
+    return try {
+      val file = java.io.File(path)
+      if (!file.exists()) {
+        Log.w("dsh-image", "openNativePath: not exists: $path")
+        return false
+      }
+      val uri = androidx.core.content.FileProvider.getUriForFile(
+        this, "$packageName.fileprovider", file,
+      )
+      val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      startActivity(intent)
+      Log.i("dsh-image", "openNativePath ok: $path")
+      true
+    } catch (e: Exception) {
+      Log.w("dsh-image", "openNativePath failed: $path -> ${e.message}")
+      false
+    }
+  }
+
   /** 从 content Uri 读取显示名（MediaStore DISPLAY_NAME）。 */
   private fun queryImageName(uri: Uri): String? {
     return try {
@@ -666,6 +695,7 @@ class MainActivity : ComponentActivity() {
             showTestNotification("开发者日志已关闭", "日志收集已停止")
           }
         },
+        onOpenNativePath = { path -> openNativePathWithReader(path) },
       ),
       "androidBridge",
     )

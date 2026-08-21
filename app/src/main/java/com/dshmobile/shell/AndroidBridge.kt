@@ -29,6 +29,7 @@ class AndroidBridge(
   private val onOpenConsole: () -> Unit = {},
   private val onGetDevLogEnabled: () -> Boolean = { false },
   private val onSetDevLogEnabled: (Boolean) -> Unit = {},
+  private val onOpenNativePath: (path: String) -> Boolean = { false },
 ) {
 
   @JavascriptInterface
@@ -139,6 +140,17 @@ class AndroidBridge(
   fun setDevLogEnabled(enabled: Boolean) {
     onSetDevLogEnabled(enabled)
   }
+
+  /**
+   * Open a filesystem path with an external reader app (issue #52): the
+   * engine's native-path opener only knows mac/win/linux desktops, and on
+   * Android the page's file-mention buttons would otherwise fail with
+   * "unsupported on android". The shell resolves the path through
+   * ACTION_VIEW (content Uri via FileProvider); returns whether a reader
+   * took it. Callers fall back to the engine RPC when false (desktop hosts).
+   */
+  @JavascriptInterface
+  fun openNativePath(path: String): Boolean = onOpenNativePath(path)
 
   companion object {
     /**
