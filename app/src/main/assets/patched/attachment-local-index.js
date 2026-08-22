@@ -133,8 +133,9 @@ async function imageMetadata(image) {
 * @returns verified format and dimensions.
 */
 async function probeImage(data) {
+	const sharp = await requireSharp();
 	try {
-		return await imageMetadata((await requireSharp())(data, {
+		return await imageMetadata(sharp(data, {
 			failOn: "error",
 			limitInputPixels: false
 		}));
@@ -150,8 +151,9 @@ async function probeImage(data) {
 * @returns verified format and dimensions.
 */
 async function detectImage(data, limits) {
+	const sharp = await requireSharp();
 	try {
-		const image = (await requireSharp())(data, {
+		const image = sharp(data, {
 			failOn: "error",
 			limitInputPixels: false
 		});
@@ -205,12 +207,13 @@ function canPassThroughNormalization(detected, bytes, policy) {
 * @returns whether the nearest-neighbour sample stays within the low-color threshold.
 */
 async function hasLowColourCount(pipeline) {
+	const sharp = await requireSharp();
 	const { data, info } = await pipeline.clone().resize({
 		width: LOW_COLOUR_SAMPLE_EDGE,
 		height: LOW_COLOUR_SAMPLE_EDGE,
 		fit: "inside",
 		withoutEnlargement: true,
-		kernel: (await requireSharp()).kernel.nearest,
+		kernel: sharp.kernel.nearest,
 		fastShrinkOnLoad: false
 	}).raw().toBuffer({ resolveWithObject: true });
 	const colours = /* @__PURE__ */ new Set();
@@ -232,7 +235,7 @@ async function verifyNormalizedImage(image, expectedAlpha) {
 }
 /** Build one fixed-size, oriented, metadata-free sRGB pipeline from submitted bytes. */
 function preparedPipeline(data, width, height) {
-	return (await requireSharp())(data, {
+	return sharp(data, {
 		failOn: "error",
 		limitInputPixels: false
 	}).rotate().toColourspace("srgb").resize({
@@ -269,6 +272,7 @@ function encodingAttemptsAtSize(data, width, height, hasAlpha, lowColour) {
 * @returns verified provider-independent normalized bytes and metadata.
 */
 async function normalizeImage(data, detected, policy) {
+	const sharp = await requireSharp();
 	if (canPassThroughNormalization(detected, data.byteLength, policy)) return {
 		data,
 		mediaType: detected.mediaType,
@@ -277,7 +281,7 @@ async function normalizeImage(data, detected, policy) {
 	};
 	try {
 		let { width, height } = initialDimensions(detected, policy.maxDimension);
-		const lowColour = await hasLowColourCount((await requireSharp())(data, {
+		const lowColour = await hasLowColourCount(sharp(data, {
 			failOn: "error",
 			limitInputPixels: false
 		}).rotate().toColourspace("srgb"));
@@ -385,7 +389,7 @@ async function syncDirectory(path) {
 		handle = await open(path, constants.O_RDONLY);
 		await handle.sync();
 	} catch (error) {
-		// Android: the app cannot open ancestor dirs above its data dir (EACCES/EPERM on /data/user/0).
+		// Android: cannot open ancestor dirs above the app data dir (EACCES/EPERM on /data/user/0).
 		// (attachment-ancestor-sync-eacces-tolerance)
 		if (error !== null && (error.code === "EACCES" || error.code === "EPERM")) return;
 		throw error;
@@ -623,7 +627,7 @@ function pipeline(attachment, width, height) {
 	});
 }
 function sourcePipeline(attachment) {
-	return (await requireSharp())(attachment.data, {
+	return sharp(attachment.data, {
 		failOn: "error",
 		limitInputPixels: false
 	}).toColourspace("srgb");

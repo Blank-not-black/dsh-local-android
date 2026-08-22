@@ -353,19 +353,15 @@ class EngineManager(private val context: Context, private val pickToken: String?
    *  - primitives-index.js: clipboard fallback for WebViews where navigator.clipboard is denied
    *  - attachment-local-index.js: Android link(2) blocked by sepolicy → copyFile fallback + EACCES tolerance
    *  - web-frontend-index.html: immersive viewport-fit=cover patch
-   *  - llm-deepseek-index.js: DeepSeek-V4-Flash-Vision-Exp catalog entry (multimodal vision model,
-   *    official since dsh 0.1.1-rc.1). Stores the rc.1 adapter as a full-file overlay, so the model
-   *    is selectable on any base snapshot; skip-marker is the model id itself, so a base whose
-   *    bundled adapter already ships the model (0.1.1-rc.1+) leaves the native file untouched.
+   *  - llm-deepseek: NOT patched — dsh 0.1.1-rc.2 bundles deepseek-v4-flash-vision-exp natively
+   *    with the corrected image-request serialization (see applyRuntimePatches).
    *  - session-persistence-jsonl-index.js / fs-local-index.js: Android link(2) fallback — dsh
    *    0.1.1-rc.1 dropped the EACCES/EPERM/ENOTSUP → rename fallback that rc.8 shipped; Android
    *    app domains forbid link(2) (sepolicy), re-add it as a full-file overlay (as in rc.8).
-   *    Note: these are full-file overlays pinned to the rc.1 bundle; when the snapshot is next
-   *    upgraded, re-evaluate whether the overlay is still needed (upstream may re-add the
-   *    fallback) instead of blindly overwriting the newer native file.
+   *  Patches use a content fingerprint (no fixed marker), so an updated asset re-applies on
+   *  upgrade instead of being skipped by a stale marker string (the v1→v2 update bug).
    * (v0.12.4 rc8 removed the onImagePicked/llm-deepseek/textzoom patches — rc8's native image
-   * request support and no-cache hardening supersede them; the vision-exp patch re-adds a
-   * catalog-only llm-deepseek overlay for the model released 2026-08-21.)
+   * request support and no-cache hardening supersede them.)
    */
   private fun applyRuntimePatches() {
     val dshPkgs = File(usrDir, "lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai")
@@ -376,21 +372,24 @@ class EngineManager(private val context: Context, private val pickToken: String?
     // hardening cover them; the textzoom feature was dropped after the settings-general rework
     // (the bridge method is kept).
     applyAssetPatch("patched/primitives-index.js",
-      File(dshPkgs, "dsh-client-ui-primitives/lib/index.js"), "dsh-mobile-clip-fallback")
+      File(dshPkgs, "dsh-client-ui-primitives/lib/index.js"))
     applyAssetPatch("patched/attachment-local-index.js",
-      File(dshPkgs, "dsh-attachment-local/lib/index.js"), "attachment-ancestor-sync-eacces-tolerance")
+      File(dshPkgs, "dsh-attachment-local/lib/index.js"))
     applyAssetPatch("patched/web-frontend-index.html",
-      File(webDist, "index.html"), "viewport-fit=cover")
-    applyAssetPatch("patched/llm-deepseek-index.js",
-      File(dshPkgs, "dsh-llm-deepseek/lib/index.js"), "deepseek-v4-flash-vision-exp")
+      File(webDist, "index.html"))
+    // dsh 0.1.1-rc.2 bundles deepseek-v4-flash-vision-exp natively (with the corrected
+    // image-request serialization), so the old rc.1 catalog overlay is obsolete — the native
+    // file is left untouched.
     applyAssetPatch("patched/session-persistence-jsonl-index.js",
-      File(dshPkgs, "dsh-session-persistence-jsonl/lib/index.js"), "jsonl-link-eacces-fallback")
+      File(dshPkgs, "dsh-session-persistence-jsonl/lib/index.js"))
     applyAssetPatch("patched/fs-local-index.js",
-      File(dshPkgs, "dsh-fs-local/lib/index.js"), "fs-link-eacces-fallback")
+      File(dshPkgs, "dsh-fs-local/lib/index.js"))
   }
 
-  /** Overwrite-style patch: skipped when the target already contains the marker string. */
-  private fun applyAssetPatch(asset: String, target: File, marker: String) {
+  /** Overwrite-style patch: applies when the target differs from the bundled asset (content
+   *  fingerprint), so an updated asset re-applies on upgrade instead of being skipped by a stale
+   *  marker string (the v1→v2 asset-update failure). */
+  private fun applyAssetPatch(asset: String, target: File) {
     // Patches track bundle layouts: when the runtime no longer ships the patched package
     // (e.g. dsh-client-ui-primitives dropped from the dependency graph in dsh 0.1.1-rc.1),
     // stop applying instead of littering a dead overlay into to the tree.
@@ -398,13 +397,17 @@ class EngineManager(private val context: Context, private val pickToken: String?
       Log.i(TAG, "runtime patch skipped (target package absent): $asset")
       return
     }
-    if (target.exists() && target.readText().contains(marker)) return
+    val assetBytes = try {
+      context.assets.open(asset).use { it.readBytes() }
+    } catch (e: Exception) {
+      Log.w(TAG, "runtime patch asset missing: $asset")
+      return
+    }
+    if (target.exists() && target.readBytes().contentEquals(assetBytes)) return
     try {
-      context.assets.open(asset).use { input ->
-        target.parentFile?.mkdirs()
-        target.outputStream().use { out -> input.copyTo(out) }
-      }
-      Log.i(TAG, "runtime patch applied: $asset -> $target")
+      target.parentFile?.mkdirs()
+      target.writeBytes(assetBytes)
+      Log.i(TAG, "runtime patch applied/updated: $asset -> $target")
     } catch (e: Exception) {
       Log.e(TAG, "runtime patch failed: $asset", e)
     }
