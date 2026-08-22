@@ -156,6 +156,8 @@ class MainActivity : ComponentActivity() {
 
   private val engineManager by lazy { EngineManager(this, pickToken) }
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+  /** 根容器（onCreate 构建；向导/WebView/引导界面共挂）。 */
+  private lateinit var setupRoot: FrameLayout
   /** Invalidates stale startup work when the user closes or explicitly restarts the engine. */
   private val engineFlowGeneration = java.util.concurrent.atomic.AtomicLong(0)
   private var pendingPickCallback: String? = null
@@ -397,6 +399,7 @@ class MainActivity : ComponentActivity() {
     WindowCompat.setDecorFitsSystemWindows(window, false)
     applyImmersive(immersivePrefs())
     val root = FrameLayout(this)
+    setupRoot = root
     webView = WebView(this).apply {
       id = View.generateViewId()
       visibility = View.GONE
@@ -429,9 +432,32 @@ class MainActivity : ComponentActivity() {
     // Testable update trigger: adb am start -n .../.MainActivity -a com.dsharnessmobile.shell.action.UPDATE
     if (intent?.action == ACTION_UPDATE) {
       runUpdate()
+    } else if (!SetupWizard.isDone(this)) {
+      // 0.13.0 初始配置向导（F1.0/M3.2）：首启五步（欢迎/运行时/工具链镜像/共享目录/完成），
+      // 完成写 profileInstalled 标记后进入正常启动流；向导期间引擎不自动启动。
+      showSetupWizard()
     } else {
       startEngineFlow()
     }
+  }
+
+  /** 首启向导展示；完成后移除并进入正常引擎启动流。 */
+  private fun showSetupWizard() {
+    if (SetupWizard.stepOf(this) < 0) SetupWizard.setStep(this, 0)
+    val wizard = SetupWizard(this)
+    lateinit var wizardView: View
+    wizardView = wizard.build(
+      onDone = {
+        runOnUiThread {
+          (wizardView.parent as? ViewGroup)?.removeView(wizardView)
+          wizardView.visibility = View.GONE
+          showTestNotification("配置完成", "即将启动引擎")
+          startEngineFlow()
+        }
+      },
+      onPickDir = { pickDirectoryWithPermissionCheck("wizard-shared") },
+    )
+    setupRoot.addView(wizardView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
   }
 
   override fun onResume() {

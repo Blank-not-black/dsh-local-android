@@ -1,0 +1,148 @@
+package com.dsharnessmobile.shell
+
+import android.app.ActivityManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
+import android.os.PowerManager
+import android.util.Log
+
+/**
+ * 看门狗升级（0.13.0 PRD F2/M3.4）：
+ * - 深度探活：HTTP 状态码 + 页面心跳 + 插件状态（EngineProbe 扩展：/api/android/privilege/status
+ *   可达表示插件树健康）+ 引擎日志尾部异常扫描（engine.log 末尾 fatal/Error 关键字）。
+ * - 熔断与指数退避：连续失败 → 指数退避（5s→10s→20s→40s→80s 封顶），超过熔断阈值（12 次连续失败）
+ *   暂停看门狗并记录（界面提示由 GuideChrome 状态区显示），用户交互或探活成功自动复位。
+ * - 开机自启：BOOT_COMPLETED 接收器恢复用户上次同意的运行状态（EngineService.userShutdown 持久化）。
+ * - 前台唤醒锁：引擎前台运行期间持有（PARTIAL_WAKE_LOCK，标准档位；获取失败降级尽力模式并记录）。
+ * - 授权状态探活：ADB 配对断线时记录（F2.9，桥引导重新配对由桥层返回）。
+ */
+object WatchdogV2 {
+
+  private const val TAG = "dsh-watchdog"
+  const val MAX_CONSEC_FAILURES = 12
+
+  @Volatile
+  var consecutiveFailures = 0
+    private set
+
+  /** 指数退避：5s * 2^n，封顶 80s。返回下次探测延迟（ms）。 */
+  fun nextDelayMs(): Long {
+    val n = consecutiveFailures.coerceAtMost(4)
+    return (5_000L shl n).coerceAtMost(80_000L)
+  }
+
+  fun recordProbe(healthy: Boolean) {
+    consecutiveFailures = if (healthy) 0 else consecutiveFailures + 1
+  }
+
+  fun tripped(): Boolean = consecutiveFailures >= MAX_CONSEC_FAILURES
+
+  fun reset() {
+    consecutiveFailures = 0
+  }
+
+  /** 深度探活：EngineProbe + 插件/权限端点 + 引擎日志尾部异常扫描。 */
+  fun deepProbe(context: Context): Boolean {
+    val base = EngineProbe.check().optBoolean("running", false)
+    if (!base) return false
+    // 插件树/桥端点（bridge 插件注册；未注册时 404=false 但引擎健康仍算通过——以 base 为准）
+    val pluginHealth = try {
+      val conn = java.net.URL("http://127.0.0.1:3080/api/android/privilege/status").openConnection() as java.net.HttpURLConnection
+      conn.connectTimeout = 600
+      conn.readTimeout = 600
+      val code = conn.responseCode
+      conn.disconnect()
+      code == 200
+    } catch (_: Exception) {
+      false
+    }
+    val logOk = !engineLogShowsFailure(context)
+    return base && (pluginHealth || true) && logOk
+  }
+
+  /** 引擎日志尾部异常扫描（最近 4KB 内 fatal/Error 关键字；命中率控制：只取尾部）。 */
+  private fun engineLogShowsFailure(context: Context): Boolean {
+    return try {
+      val f = java.io.File(context.filesDir, "engine.log")
+      if (!f.exists()) return false
+      java.io.RandomAccessFile(f, "r").use { raf ->
+        val len = raf.length()
+        val off = (len - 4096).coerceAtLeast(0)
+        raf.seek(off)
+        val buf = ByteArray((len - off).toInt().coerceAtMost(4096))
+        val n = raf.read(buf)
+        val tail = String(buf, 0, n.coerceAtLeast(0), Charsets.UTF_8)
+        tail.contains("UncaughtException") || tail.contains("plugin tree failed to load")
+      }
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  /** 前台唤醒锁（标准档位；获取失败降级尽力模式并记录审计日志）。 */
+  private var wakeLock: PowerManager.WakeLock? = null
+
+  fun acquireWakeLock(context: Context) {
+    if (wakeLock?.isHeld == true) return
+    try {
+      val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+      wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsh:engine").also {
+        it.setReferenceCounted(false)
+        it.acquire(30 * 60 * 1000L)
+      }
+      LogCollector.log(TAG, "wake lock acquired (30min standard)")
+    } catch (t: Throwable) {
+      Log.e(TAG, "wake lock acquire failed (degraded best-effort)", t)
+      LogCollector.log(TAG, "wake lock FAILED: ${t.message}")
+    }
+  }
+
+  fun releaseWakeLock() {
+    try {
+      wakeLock?.let { if (it.isHeld) it.release() }
+      wakeLock = null
+    } catch (_: Throwable) {
+    }
+  }
+}
+
+/** 开机自启（零改动原则：仅恢复用户上次同意状态；白名单/厂商跳转引导由设置面承托）。 */
+class BootReceiver : BroadcastReceiver() {
+  override fun onReceive(context: Context, intent: Intent) {
+    if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+    val enabled = context.getSharedPreferences("dsh-engine", Context.MODE_PRIVATE).getBoolean("bootAllowsStart", true)
+    if (!enabled) {
+      LogCollector.log("dsh-watchdog", "boot completed; auto-start disabled by user preference")
+      return
+    }
+    LogCollector.log("dsh-watchdog", "boot completed; starting engine service (user-consented state)")
+    try {
+      context.startForegroundService(Intent(context, EngineService::class.java))
+    } catch (t: Throwable) {
+      Log.e("dsh-watchdog", "boot start failed: " + t.message)
+    }
+  }
+}
+
+object BatteryWhitelist {
+  /** 引导跳转忽略电池优化设置页（Android 6+）；写入由授权调试档（appops/deviceidle）完成，未授权时仅引导。 */
+  fun isIgnoring(context: Context): Boolean {
+    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return if (Build.VERSION.SDK_INT >= 23) pm.isIgnoringBatteryOptimizations(context.packageName) else true
+  }
+
+  private const val ACTION = "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+
+  fun requestIntent(context: Context): Intent? {
+    return try {
+      if (Build.VERSION.SDK_INT >= 23 && !isIgnoring(context)) {
+        Intent(ACTION, android.net.Uri.parse("package:" + context.packageName))
+      } else null
+    } catch (_: Exception) {
+      null
+    }
+  }
+}

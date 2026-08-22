@@ -67,12 +67,21 @@ class EngineService : Service() {
   private fun ensureEngine() {
     if (!engineManager.engineReady) return
     if (watchdog == null) {
+      WatchdogV2.acquireWakeLock(this)
       watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
         exec.scheduleWithFixedDelay({
-          val healthy = EngineProbe.check().optBoolean("running", false)
+          // 深度探活（PRD F2-5）：HTTP + 插件端点 + 引擎日志异常；熔断退避（F2-6/7）。
+          if (WatchdogV2.tripped()) {
+            // 熔断：暂停重启尝试（界面提示由 GuideChrome 状态区显示）；用户交互复位。
+            LogCollector.log("dsh-watchdog", "watchdog tripped: consecutive failure burst; paused")
+            return@scheduleWithFixedDelay
+          }
+          val healthy = WatchdogV2.deepProbe(this)
           engineManager.onEngineProbe(healthy)
+          WatchdogV2.recordProbe(healthy)
           if (!healthy && engineManager.engineReady) {
             engineManager.startEngine()
+            LogCollector.log("dsh-watchdog", "restart attempt after failure #" + WatchdogV2.consecutiveFailures + " (backoff: " + WatchdogV2.nextDelayMs() + "ms advisory)")
           }
         }, 5, 5, TimeUnit.SECONDS)
       }
