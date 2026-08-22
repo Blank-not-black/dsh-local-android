@@ -659,7 +659,7 @@ class MainActivity : ComponentActivity() {
       AndroidBridge(
         onPickRequest = { callbackId -> pickDirectoryWithPermissionCheck(callbackId) },
         onKeepScreen = { enable -> keepScreenOn(enable) },
-        onNotify = { title, text -> showTestNotification(title, text) },
+        onNotify = { title, text -> NotifyCenter.notify(this, "task", title, text) },
         onAllFilesAccessRequest = { openAllFilesAccessSettings() },
         onDebugLogsRequest = { downloadDebugLogs() },
         onGetSystemDark = {
@@ -696,6 +696,9 @@ class MainActivity : ComponentActivity() {
           }
         },
         onOpenNativePath = { path -> openNativePathWithReader(path) },
+        onAdbShell = { cmd -> AdbState.adbShellExecute(this, cmd) },
+        onGetAdbState = { AdbState.stateJson(this) },
+        onSetAdbAllow = { enable -> AdbState.setAllowSwitch(this, enable) },
       ),
       "androidBridge",
     )
