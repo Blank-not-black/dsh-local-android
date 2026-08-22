@@ -1,6 +1,6 @@
 import z from "@deepseek-ai/schemastery";
 import { readdirSync } from "node:fs";
-import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";
+import { link, rename, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";
 import { dirname, join, parse, resolve, toNamespacedPath } from "node:path";
 import { performance } from "node:perf_hooks";
 import { scheduler } from "node:timers/promises";
