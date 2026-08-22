@@ -1,6 +1,7 @@
 package com.dsharnessmobile.shell
 
 import android.content.Context
+import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -62,9 +63,19 @@ class UpdateManager(private val context: Context) {
         val old = File(context.filesDir, "usr-old")
         deleteRecursively(old)
         if (usr.exists()) usr.renameTo(old)
-        if (!newUsr.renameTo(usr)) throw IllegalStateException("切换失败")
+        if (!newUsr.renameTo(usr)) {
+          // 切换失败：立即回退旧代，不留半更新状态（PRD F3.2 第二层回退语义）。
+          if (old.exists() && !old.renameTo(usr)) {
+            Log.e("dsh-update", "swap failed and rollback failed; old runtime at usr-old: " + old.absolutePath)
+          }
+          throw IllegalStateException("切换失败（已回退旧代）")
+        }
         deleteRecursively(stage)
-        deleteRecursively(old)
+        // 更新管理器第二版（PRD F3.2/F1.10）：保留上一版运行时（usr-old），
+        // 由 EngineManager 探活确认（连续 N 次健康）后清理；超窗未健康自动回退旧代。
+        // 原子切换联动 F3 最后已知良好状态语义：pending 标记是回退状态机的输入。
+        File(context.filesDir, ".update-pending").writeText("1")
+        File(context.filesDir, ".update-pending-at").writeText(System.currentTimeMillis().toString())
 
         // Kill the old engine process: the EngineService watchdog restarts
         // it from the NEW usr within seconds.

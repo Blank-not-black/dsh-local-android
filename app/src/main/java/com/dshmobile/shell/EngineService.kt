@@ -57,19 +57,24 @@ class EngineService : Service() {
     }
   }
 
-  /** Start the engine if not running, then arm the watchdog. */
+  /**
+   * Start the engine if not running, then arm the watchdog. v2 (PRD F2-4):
+   * the watchdog is installed in EVERY state — the previous early return for a
+   * running engine left no watcher, so a later process death went unnoticed
+   * until the user interacted. The tick also feeds the update-v2 confirmation/
+   * rollback state machine (PRD F3.2/F1.10).
+   */
   private fun ensureEngine() {
-    if (EngineProbe.check().optBoolean("running", false)) return
-    if (engineManager.engineReady && engineManager.startEngine()) {
-      // Watchdog: poll every 5s; if the engine process dies, restart it.
-      if (watchdog == null) {
-        watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
-          exec.scheduleWithFixedDelay({
-            if (!EngineProbe.check().optBoolean("running", false) && engineManager.engineReady) {
-              engineManager.startEngine()
-            }
-          }, 5, 5, TimeUnit.SECONDS)
-        }
+    if (!engineManager.engineReady) return
+    if (watchdog == null) {
+      watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
+        exec.scheduleWithFixedDelay({
+          val healthy = EngineProbe.check().optBoolean("running", false)
+          engineManager.onEngineProbe(healthy)
+          if (!healthy && engineManager.engineReady) {
+            engineManager.startEngine()
+          }
+        }, 5, 5, TimeUnit.SECONDS)
       }
     }
   }
