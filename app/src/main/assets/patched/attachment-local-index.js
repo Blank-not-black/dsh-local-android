@@ -234,7 +234,8 @@ async function verifyNormalizedImage(image, expectedAlpha) {
 	return image;
 }
 /** Build one fixed-size, oriented, metadata-free sRGB pipeline from submitted bytes. */
-function preparedPipeline(data, width, height) {
+async function preparedPipeline(data, width, height) {
+	const sharp = await requireSharp();
 	return sharp(data, {
 		failOn: "error",
 		limitInputPixels: false
@@ -254,8 +255,8 @@ function initialDimensions(detected, maxDimension) {
 	};
 }
 /** Lazy encoding order for one size, separated by sampled colour complexity and alpha. */
-function encodingAttemptsAtSize(data, width, height, hasAlpha, lowColour) {
-	const prepared = preparedPipeline(data, width, height);
+async function encodingAttemptsAtSize(data, width, height, hasAlpha, lowColour) {
+	const prepared = await preparedPipeline(data, width, height);
 	const webp = NORMALIZATION_QUALITIES.map((quality) => (() => encode(prepared.clone(), "image/webp", quality)));
 	if (lowColour) return [() => encode(prepared.clone(), "image/png", void 0, !hasAlpha), ...webp];
 	if (hasAlpha) return webp;
@@ -286,7 +287,7 @@ async function normalizeImage(data, detected, policy) {
 			limitInputPixels: false
 		}).rotate().toColourspace("srgb"));
 		for (;;) {
-			const encoded = await encodeFirstWithinLimit(encodingAttemptsAtSize(data, width, height, detected.hasAlpha, lowColour), policy.maxBytes);
+			const encoded = await encodeFirstWithinLimit(await encodingAttemptsAtSize(data, width, height, detected.hasAlpha, lowColour), policy.maxBytes);
 			if (!isExhaustedEncoding(encoded)) return await verifyNormalizedImage(encoded, detected.mediaType === "image/gif" ? void 0 : detected.hasAlpha);
 			if (width === 1 && height === 1) break;
 			const sizeScale = Math.sqrt(policy.maxBytes / encoded.smallest.data.byteLength) * .95;
@@ -618,15 +619,16 @@ function descriptor(attachment, policy) {
 function requestImageVariantId(attachment, policy) {
 	return ImageVariantId(`sha256:${digest(descriptor(attachment, policy))}`);
 }
-function pipeline(attachment, width, height) {
-	return sourcePipeline(attachment).resize({
+async function pipeline(attachment, width, height) {
+	return (await sourcePipeline(attachment)).resize({
 		width,
 		height,
 		fit: "inside",
 		withoutEnlargement: true
 	});
 }
-function sourcePipeline(attachment) {
+async function sourcePipeline(attachment) {
+	const sharp = await requireSharp();
 	return sharp(attachment.data, {
 		failOn: "error",
 		limitInputPixels: false
@@ -644,8 +646,8 @@ async function encoded(image, mediaType, quality, palette = true) {
 		height: info.height
 	};
 }
-function encodingAttempts(attachment, width, height, hasAlpha, lowColour) {
-	const prepared = pipeline(attachment, width, height);
+async function encodingAttempts(attachment, width, height, hasAlpha, lowColour) {
+	const prepared = await pipeline(attachment, width, height);
 	const webp = REQUEST_IMAGE_QUALITIES.map((quality) => (() => encoded(prepared.clone(), "image/webp", quality)));
 	if (lowColour) return [() => encoded(prepared.clone(), "image/png", void 0, !hasAlpha), ...webp];
 	if (hasAlpha) return webp;
@@ -659,9 +661,9 @@ async function createRequestImage(attachment, policy, hasAlpha) {
 		width: attachment.ref.width,
 		height: attachment.ref.height
 	};
-	const lowColour = await hasLowColourCount(sourcePipeline(attachment));
+	const lowColour = await hasLowColourCount(await sourcePipeline(attachment));
 	for (;;) {
-		const encodedVersion = await encodeFirstWithinLimit(encodingAttempts(attachment, dimensions.width, dimensions.height, hasAlpha, lowColour), policy.maxBytes);
+		const encodedVersion = await encodeFirstWithinLimit(await encodingAttempts(attachment, dimensions.width, dimensions.height, hasAlpha, lowColour), policy.maxBytes);
 		if (!isExhaustedEncoding(encodedVersion)) return encodedVersion;
 		if (dimensions.width === 1 && dimensions.height === 1) break;
 		const scale = Math.min(.9, Math.sqrt(policy.maxBytes / encodedVersion.smallest.data.byteLength) * .95);
