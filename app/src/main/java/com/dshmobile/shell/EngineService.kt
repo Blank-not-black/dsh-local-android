@@ -39,6 +39,17 @@ class EngineService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
+  /** 任务移除（生命周期礼仪 F5.3）：允许进程结束，尽力清理本次文件直达临时会话/工作区，
+   *  不启动任何隐藏复活（不反弹）；后台阶段保活不受影响（见 F2 主题）。 */
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    try {
+      FileIncoming.cleanupTmp(this)
+      LogCollector.log("dsh-file-open", "onTaskRemoved: temp cleanup done (no resurrection)")
+    } catch (_: Exception) {
+    }
+    super.onTaskRemoved(rootIntent)
+  }
+
   override fun onDestroy() {
     watchdog?.shutdownNow()
     watchdog = null

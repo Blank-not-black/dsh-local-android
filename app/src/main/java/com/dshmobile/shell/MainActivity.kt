@@ -437,9 +437,51 @@ class MainActivity : ComponentActivity() {
       // 完成写 profileInstalled 标记后进入正常启动流；向导期间引擎不自动启动。
       showSetupWizard()
     } else {
+      maybeProcessIncoming(intent)
       startEngineFlow()
     }
   }
+
+  /**
+   * 文件直达（0.13.0 F5/M3.5）：VIEW/SEND 意图 → 校验净化 → 拷贝临时工作区 → 通知引擎侧插件。
+   * 外部路径不留原件引用（一律拷贝，权限模型对齐 F1.8）；引擎未启动先启动（启动流先于通知）。
+   */
+  private fun maybeProcessIncoming(intent: Intent?) {
+    if (intent == null) return
+    val action = intent.action
+    val uri: Uri? = when (action) {
+      Intent.ACTION_VIEW -> intent.data
+      Intent.ACTION_SEND -> intent.getParcelableExtra(Intent.EXTRA_STREAM)
+      else -> null
+    }
+    if (uri == null) return
+    val validated = FileIncoming.validate(uri.toString(), this) ?: run {
+      showTestNotification("文件直达被拒绝", "路径不在允许范围（仅系统打开/分享的真实路径）")
+      return
+    }
+    val target = FileIncoming.copyIn(this, validated) ?: run {
+      showTestNotification("文件拷贝失败", "无法读取传入文件")
+      return
+    }
+    FileIncoming.recordOpening(this, target.absolutePath)
+    LogCollector.log("dsh-file-open", "incoming processed: " + target.absolutePath)
+    // 引擎侧插件端点：路径交给 dsh-android-file-open 强制新会话（引擎未起时端点由启动流承托）。
+    Thread {
+      try {
+        val conn = java.net.URL("http://127.0.0.1:3080/api/android/file-incoming").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 3000
+        val body = org.json.JSONObject().put("path", target.absolutePath).toString()
+        conn.outputStream.use { it.write(body.toByteArray()) }
+        conn.responseCode
+        conn.disconnect()
+      } catch (_: Exception) {
+      }
+    }.start()
+  }
+
+  /** 任务移除清理见 EngineService.onTaskRemoved（生命周期礼仪 F5.3：让位+尽力清理，不反弹）。 */
 
   /** 首启向导展示；完成后移除并进入正常引擎启动流。 */
   private fun showSetupWizard() {

@@ -42,6 +42,25 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- 0.13.0 F5（M3.5）：系统「使用其他应用打开」+ 分享面板入口（D14 查看与分享都支持）。 -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/json" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="video/*" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
+      </intent-filter>
     </activity>
 
     <!-- 内置控制台：快照 bash 交互终端（引擎未运行时也可排查）。 -->
