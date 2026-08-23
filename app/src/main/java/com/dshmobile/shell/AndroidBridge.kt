@@ -30,6 +30,12 @@ class AndroidBridge(
   private val onGetDevLogEnabled: () -> Boolean = { false },
   private val onSetDevLogEnabled: (Boolean) -> Unit = {},
   private val onOpenNativePath: (path: String) -> Boolean = { false },
+  /** 0.13.0 F1.7：ADB shell 执行原语（授权时执行；未授权失败关闭返回引导 JSON）。 */
+  private val onAdbShell: (cmd: String) -> String = { _ -> "" },
+  /** 0.13.0 F1.7：授权状态 JSON（三道人门状态视图，供设置页/授权状态探活）。 */
+  private val onGetAdbState: () -> String = { "{}" },
+  /** 0.13.0 F1.7：应用内「允许访问」开关（第二道人门；默认关闭；回收即失效）。 */
+  private val onSetAdbAllow: (enable: Boolean) -> Unit = {},
 ) {
 
   @JavascriptInterface
@@ -151,6 +157,21 @@ class AndroidBridge(
    */
   @JavascriptInterface
   fun openNativePath(path: String): Boolean = onOpenNativePath(path)
+
+  /** ADB shell 执行原语（F1.7）：返回 JSON {ok, stdout?, stderr?, guidance?}。
+   *  未授权/门控不满足 → fail-closed（绝不静默执行）。 */
+  @JavascriptInterface
+  fun adbShell(cmd: String): String = onAdbShell(cmd)
+
+  /** 授权状态视图（F1.7/F2.9 授权探活）：JSON {fullAccess, allowSwitch, paired, wirelessDebugOn, message}。 */
+  @JavascriptInterface
+  fun getAdbState(): String = onGetAdbState()
+
+  /** 应用内「允许访问」开关（第二道人门；默认关闭；关闭即通道失败关闭）。 */
+  @JavascriptInterface
+  fun setAdbAllow(enable: Boolean) {
+    onSetAdbAllow(enable)
+  }
 
   companion object {
     /**

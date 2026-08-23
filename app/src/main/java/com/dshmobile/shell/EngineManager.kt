@@ -456,8 +456,12 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
     return try {
       applyRuntimePatches()
+      // --no-open: the engine must never try to open a desktop browser on Android
+      // (the WebView IS the UI). Without it, rc.2's spawn xdg-open on a missing
+      // binary stalls engine serve on some emulators (MuMu root observed);
+      // the flag is the official engine CLI switch (see bin.js docs).
       val args = arrayOf(
-        nodeBin.absolutePath, "--expose-internals", dshBin.absolutePath, "web", "--port", port.toString(),
+        nodeBin.absolutePath, "--expose-internals", dshBin.absolutePath, "web", "--port", port.toString(), "--no-open",
       )
       engineProcess = startWithArgs(args, shellEnv())
       // The cooldown is written only after a real start: failure paths don't consume the window (retry is immediate).
@@ -608,6 +612,10 @@ class EngineManager(private val context: Context, private val pickToken: String?
       "TERMUX_VERSION" to BuildConfig.TERMUX_VERSION,
       // Directory-picker endpoint auth token (validated by the web-compat plugin via x-dsh-pick-token).
       "DSH_PICK_TOKEN" to (pickToken ?: ""),
+      // ADB 授权状态（0.13.0 F1.7）：dsh-android-bridge 插件据此失败关闭；门控=完全访问档位+开关+配对。
+      "DSH_ADB_ALLOW" to (if (AdbState.allowSwitch(context)) "1" else "0"),
+      "DSH_ADB_PAIRED" to (if (AdbState.paired(context)) "1" else "0"),
+      "DSH_ADB_WIRELESS" to (if (AdbState.paired(context)) "1" else "0"),
       // Vision backend (Qwen-VL) API key: read from a private file rather than hardcoded in source.
       "DASHSCOPE_API_KEY" to (File(context.filesDir, "dashscope-key.txt").takeIf { it.exists() }?.readText()?.trim() ?: ""),
     ) + certEnv
