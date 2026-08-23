@@ -32,19 +32,20 @@ class UpdateManager(private val context: Context) {
         onStatus("检查更新…")
         val manifest = JSONObject(fetch(manifestUrl))
         val url = manifest.getString("url")
-        val expectedSha = manifest.optString("sha256", "")
+        // 完整性加固（2026-08-23，审核 A6/B5）：在线更新快照可被中间人篡改——
+        // manifest 必须带 sha256 才能应用（空值拒绝），下载按声明大小限流。
+        val expectedSha = manifest.getString("sha256")
+        val declaredSize = manifest.optLong("size", 0)
 
-        onStatus("下载快照（" + (manifest.optLong("size", 0) / 1024 / 1024) + " MB）…")
+        onStatus("下载快照（" + (declaredSize / 1024 / 1024) + " MB）…")
         val tmp = File(context.filesDir, "update.tar.xz")
-        download(url, tmp)
+        download(url, tmp, declaredSize)
 
-        if (expectedSha.isNotEmpty()) {
-          onStatus("校验…")
-          val actual = sha256(tmp)
-          if (!actual.equals(expectedSha, ignoreCase = true)) {
-            tmp.delete()
-            throw IllegalStateException("SHA256 不匹配: " + actual.take(12) + "…")
-          }
+        onStatus("校验…")
+        val actual = sha256(tmp)
+        if (!actual.equals(expectedSha, ignoreCase = true)) {
+          tmp.delete()
+          throw IllegalStateException("SHA256 不匹配: " + actual.take(12) + "…")
         }
 
         onStatus("解压新快照…")
@@ -105,13 +106,18 @@ class UpdateManager(private val context: Context) {
     return conn.inputStream.bufferedReader().use { it.readText() }
   }
 
-  private fun download(url: String, dest: File) {
+  private fun download(url: String, dest: File, declaredSize: Long = 0) {
     val conn = URL(url).openConnection() as HttpURLConnection
     conn.connectTimeout = 10_000
     conn.readTimeout = 60_000
     val code = conn.responseCode
     if (code != 200) throw IllegalStateException("下载 HTTP $code")
     conn.inputStream.use { input -> dest.outputStream().use { out -> input.copyTo(out) } }
+    // 大小限流（审核 B5 加固）：声明 size 存在且实际超限 → 删除并拒绝
+    if (declaredSize > 0 && dest.length() > declaredSize + 16 * 1024 * 1024) {
+      dest.delete()
+      throw IllegalStateException("下载体积超限: " + dest.length() + " > " + declaredSize)
+    }
   }
 
   private fun sha256(file: File): String {

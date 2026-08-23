@@ -49,18 +49,11 @@ object WatchdogV2 {
     val base = EngineProbe.check().optBoolean("running", false)
     if (!base) return false
     // 插件树/桥端点（bridge 插件注册；未注册时 404=false 但引擎健康仍算通过——以 base 为准）
-    val pluginHealth = try {
-      val conn = java.net.URL("http://127.0.0.1:3080/api/android/privilege/status").openConnection() as java.net.HttpURLConnection
-      conn.connectTimeout = 600
-      conn.readTimeout = 600
-      val code = conn.responseCode
-      conn.disconnect()
-      code == 200
-    } catch (_: Exception) {
-      false
-    }
+    // 2026-08-23 修复：旧代码 (pluginHealth || true) 恒真 —— 白跑一次 HTTP 且死代码。
+    // 桥端点仅用于对时状态采样；日志异常扫描才是探活退出面的信号（插件树近期变化
+    // 由 engine.log 的 "plugin tree failed to load" 捕获）。
     val logOk = !engineLogShowsFailure(context)
-    return base && (pluginHealth || true) && logOk
+    return base && logOk
   }
 
   /** 引擎日志尾部异常扫描（最近 4KB 内 fatal/Error 关键字；命中率控制：只取尾部）。 */
@@ -97,6 +90,23 @@ object WatchdogV2 {
     } catch (t: Throwable) {
       Log.e(TAG, "wake lock acquire failed (degraded best-effort)", t)
       LogCollector.log(TAG, "wake lock FAILED: ${t.message}")
+    }
+  }
+
+  /**
+   * 唤醒锁续期（2026-08-23 修复：acquire(30min) 是一次性定时释放——引擎常驻超过 30 分钟
+   * 后段无锁；releaseWakeLock 从未被调用，服务销毁时也漏释放）。watchdog tick 调用：
+   * 持有即重设 30 分钟窗口（setReferenceCounted=false 下 acquire 幂等续窗）。
+   */
+  fun refreshWakeLock(context: Context) {
+    try {
+      val held = wakeLock?.isHeld == true
+      if (held) {
+        wakeLock?.acquire(30 * 60 * 1000L)
+      } else {
+        acquireWakeLock(context)
+      }
+    } catch (_: Throwable) {
     }
   }
 

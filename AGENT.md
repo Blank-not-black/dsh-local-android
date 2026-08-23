@@ -12,7 +12,7 @@
 - **职责边界**：只保留安卓平台权能与桥——前台服务、看门狗、WebView、存储访问框架（SAF）桥、快照解压与校验、在线更新、崩溃标记与测试界面、内置控制台、日志收集与导出。**AI 可见能力全部来自 DeepSeek Harness 插件**（插件仓库见下方兄弟仓库）。
 - **运行时形态**：壳应用进程树内嵌 Termux 运行时快照（`assets/snapshot.tar.xz`，解压至 `files/usr` + `files/home`）；引擎进程（Node.js `@deepseek-ai/dsh`，**基线 0.1.1-rc.2**）监听 `127.0.0.1:3080`；WebView 加载该引擎 Web UI。
 - **构建链**：minSdk 26 / **targetSdk 34**（保持 34 以保留应用数据目录内二进制直接执行，见 build.gradle.kts 注释）/ compileSdk 36；Kotlin 2.0.21；AGP 8.8.2；Java 17。
-- **依赖库**：androidx.activity-ktx 1.10.1、androidx.core-ktx 1.15.0、commons-compress 1.28.0、xz 1.10、Shizuku api/provider 13.1.5（仅阶段 1 检测，无提权动作）。
+- **依赖库**：androidx.activity-ktx 1.10.1、androidx.core-ktx 1.15.0、commons-compress 1.28.0、xz 1.10（Shizuku 为**反射检测**、零打包依赖——仅阶段 1 探活示例，无提权动作，见 ShizukuSupport.kt）。
 - **兄弟仓库**（本协调仓库 D:\coding\dsh-mobile 下的子目录）：`dsh-shell-termux`（Termux bash 执行器插件）、`dsh-client-ui-responsive`（移动形态注入层）、`dsh-host-web-compat`（页面注入脚本）、主仓库 `kelai141/dsh-mobile`（构建脚本/文档/发布；快照构建与门禁见其 `scripts/`）。
 - **上游** `deepseek-ai/deepseek-harness`（本地 checkout 于 `dsh/`）：只读参考，**零改动**；一切适配以补丁层/插件/壳侧实现。
 

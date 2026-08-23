@@ -36,6 +36,11 @@ class AndroidBridge(
   private val onGetAdbState: () -> String = { "{}" },
   /** 0.13.0 F1.7：应用内「允许访问」开关（第二道人门；默认关闭；回收即失效）。 */
   private val onSetAdbAllow: (enable: Boolean) -> Unit = {},
+  /** 0.13.0 F1.7：门3 配对码（6 位）；仅原生侧可写授权（被提权方自改授权被禁止——Shizuku 对照）。
+   *  0.14：真实握手——pairPort/connectPort 取自系统「无线调试」弹窗（码值只进 adb argv，绝不出壳）。 */
+  private val onSetAdbPair: (code: String, pairPort: Int, connectPort: Int) -> Boolean = { _, _, _ -> false },
+  /** 0.13.0 F1.7：回收配对（R6：显式回收 + 审计）。 */
+  private val onRevokeAdbPair: () -> Unit = {},
 ) {
 
   @JavascriptInterface
@@ -171,6 +176,20 @@ class AndroidBridge(
   @JavascriptInterface
   fun setAdbAllow(enable: Boolean) {
     onSetAdbAllow(enable)
+  }
+
+  /**
+   * 门3 配对码：六位数字 + 无线调试弹窗的「配对端口/连接端口」；
+   * AdbState 运行真实 adb pair 握手（码值不入审计，只记长度）。返回是否配对成功。
+   */
+  @JavascriptInterface
+  fun setAdbPair(code: String, pairPort: Int, connectPort: Int): Boolean =
+    onSetAdbPair(code, pairPort, connectPort)
+
+  /** 回收配对（R6 显式回收；配套审计）。 */
+  @JavascriptInterface
+  fun revokeAdbPair() {
+    onRevokeAdbPair()
   }
 
   companion object {

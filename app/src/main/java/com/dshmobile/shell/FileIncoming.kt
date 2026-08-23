@@ -81,16 +81,34 @@ object FileIncoming {
     return "$base ($i)$ext"
   }
 
-  /** 安全拷贝进临时工作区；返回落盘路径（或 null）。 */
+  /** 文件大小上限（PRD R17 缓解：R17 注入面/隐私——超限文件拒绝进入工作区。200MB 覆盖常见文档/图片/视频）。 */
+  private const val MAX_FILE_BYTES = 200L * 1024 * 1024
+
+  /** 安全拷贝进临时工作区；返回落盘路径（或 null——超限/IO 失败）。 */
   fun copyIn(context: Context, uri: Uri): File? {
     return try {
       val dir = tmpWorkspace(context)
       val display = queryDisplayName(context, uri) ?: "file"
       val name = uniqueName(dir, sanitizeName(display))
       val target = File(dir, name)
-      context.contentResolver.openInputStream(uri)?.use { input ->
-        target.outputStream().use { out -> input.copyTo(out) }
-      } ?: return null
+      val input = context.contentResolver.openInputStream(uri) ?: return null
+      input.use { ins ->
+        // 有界拷贝（R17：大小上限；防御流式读取绕过 SIZE 列声明）
+        var written = 0L
+        target.outputStream().use { out ->
+          val buf = ByteArray(64 * 1024)
+          while (true) {
+            val n = ins.read(buf)
+            if (n < 0) break
+            written += n
+            if (written > MAX_FILE_BYTES) {
+              target.delete()
+              return null
+            }
+            out.write(buf, 0, n)
+          }
+        }
+      }
       target
     } catch (_: Exception) {
       null

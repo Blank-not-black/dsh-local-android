@@ -53,6 +53,7 @@ class EngineService : Service() {
   override fun onDestroy() {
     watchdog?.shutdownNow()
     watchdog = null
+    WatchdogV2.releaseWakeLock()
     if (instance === this) instance = null
     // Log collection stops when the service exits (in-process idempotent singleton; also stopped when the toggle is off).
     LogCollector.stop()
@@ -90,8 +91,25 @@ class EngineService : Service() {
           val healthy = WatchdogV2.deepProbe(this)
           engineManager.onEngineProbe(healthy)
           WatchdogV2.recordProbe(healthy)
+          // 唤醒锁续期：engine 常驻超过 30min 后半段无锁（acquire 定时释放）
+          WatchdogV2.refreshWakeLock(this)
           if (!healthy && engineManager.engineReady) {
             engineManager.startEngine()
+            // F3 自动回撤（D6 方案 a）：看门狗连续失败达到阈值（熔断前）时，
+            // 触发急救 CLI 恢复最后良好快照；UndoGate 幂等 + 防循环。
+            if (UndoGate.onProbeFailure(this, WatchdogV2.consecutiveFailures)) {
+              LogCollector.log("dsh-watchdog", "auto-undo trigger: cons_fail=" + WatchdogV2.consecutiveFailures)
+              Thread {
+                val result = UndoGate.execute(this, engineManager)
+                if (result.executed) {
+                  LogCollector.log("dsh-watchdog", "auto-undo ok -> " + (result.snapshotId ?: "?"))
+                  engineManager.resetCooldown()
+                  engineManager.startEngine()
+                } else {
+                  LogCollector.log("dsh-watchdog", "auto-undo not executed: " + result.summary.take(160))
+                }
+              }.start()
+            }
             LogCollector.log("dsh-watchdog", "restart attempt after failure #" + WatchdogV2.consecutiveFailures + " (backoff: " + WatchdogV2.nextDelayMs() + "ms advisory)")
           }
         }, 5, 5, TimeUnit.SECONDS)

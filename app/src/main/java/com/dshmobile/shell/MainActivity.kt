@@ -330,15 +330,22 @@ class MainActivity : ComponentActivity() {
   /**
    * 用外部阅读器打开文件路径（issue #52）：引擎 native-path-opener 仅支持
    * mac/win/linux，Android 上文件提及按钮会失败。路径解析：
-   * - /storage/emulated/0/...（公共目录，MANAGE_EXTERNAL_STORAGE 已授）→ FileProvider content Uri
-   * - 应用私有目录（filesDir 等）→ FileProvider content Uri
-   * - 其他（content:// 或不可读）→ false，前端回退引擎 RPC（桌面宿主行为）
+   * - /storage/emulated/0/Documents/dshdata/...（导出仓库）→ FileProvider content Uri
+   * - 应用私有文件区（工作区/usr/bin）→ FileProvider content Uri
+   * - 其他（content://、不可读、或私密区路径如 .dsh/.credentials.yaml）→ false，
+   *   前端回退引擎 RPC（桌面宿主行为）。
+   * 安全（2026-08-23 CRITICAL 修复）：运行时白名单 canonical 校验，与
+   * res/xml/file_paths.xml 的映射面一致——FileProvider 若配到更宽路径也会被此层拦截。
    */
   private fun openNativePathWithReader(path: String): Boolean {
     return try {
       val file = java.io.File(path)
       if (!file.exists()) {
         Log.w("dsh-image", "openNativePath: not exists: $path")
+        return false
+      }
+      if (!isReaderAllowedPath(file)) {
+        Log.w("dsh-image", "openNativePath rejected (outside reader whitelist): $path")
         return false
       }
       val uri = androidx.core.content.FileProvider.getUriForFile(
@@ -352,6 +359,22 @@ class MainActivity : ComponentActivity() {
       true
     } catch (e: Exception) {
       Log.w("dsh-image", "openNativePath failed: $path -> ${e.message}")
+      false
+    }
+  }
+
+  /** 外部阅读器白名单（与 res/xml/file_paths.xml 映射面一致；canonical 比较防 symlink/.. 逃逸）。 */
+  private fun isReaderAllowedPath(file: java.io.File): Boolean {
+    return try {
+      val canon = file.canonicalPath
+      val roots = listOf(
+        java.io.File(filesDir, "home/.dsh/workspaces"),
+        java.io.File(filesDir, "home/tmp"),
+        java.io.File(filesDir, "usr/bin"),
+        java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "dshdata"),
+      ).map { it.canonicalPath }
+      roots.any { root -> canon == root || canon.startsWith(root + java.io.File.separator) }
+    } catch (_: Exception) {
       false
     }
   }
@@ -741,9 +764,14 @@ class MainActivity : ComponentActivity() {
           }
         },
         onOpenNativePath = { path -> openNativePathWithReader(path) },
-        onAdbShell = { cmd -> AdbState.adbShellExecute(this, cmd) },
+        onAdbShell = { cmd -> AdbState.adbShellExecute(this, engineManager, cmd) },
         onGetAdbState = { AdbState.stateJson(this) },
         onSetAdbAllow = { enable -> AdbState.setAllowSwitch(this, enable) },
+        // 0.14 真实配对：码值只经 adb argv（壳侧），端口取自系统「无线调试」弹窗；配对成功才写 paired。
+        onSetAdbPair = { code, pairPort, connectPort ->
+          AdbState.pairWithCode(this, engineManager, code, pairPort, connectPort).ok
+        },
+        onRevokeAdbPair = { AdbState.revokePair(this, engineManager) },
       ),
       "androidBridge",
     )
@@ -1249,7 +1277,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private enum class GuidePhase { Idle, Starting, Extracting, Updating, Recovering, Error, Closed }
+  private enum class GuidePhase { Idle, Starting, Extracting, Updating, Recovering, Undoing, Error, Closed }
 
   private fun applyGuidePhase(phase: GuidePhase, title: String, hint: String? = null) {
     lastGuidePhase = phase
@@ -1261,10 +1289,12 @@ class MainActivity : ComponentActivity() {
     val busy = phase == GuidePhase.Starting ||
       phase == GuidePhase.Extracting ||
       phase == GuidePhase.Updating ||
-      phase == GuidePhase.Recovering
+      phase == GuidePhase.Recovering ||
+      phase == GuidePhase.Undoing
     val lockPrimary = phase == GuidePhase.Starting ||
       phase == GuidePhase.Extracting ||
-      phase == GuidePhase.Updating
+      phase == GuidePhase.Updating ||
+      phase == GuidePhase.Undoing
     chrome.primaryButton.isEnabled = !lockPrimary
     chrome.primaryButton.alpha = if (lockPrimary) 0.55f else 1f
     chrome.primaryButton.text = when (phase) {
@@ -1272,6 +1302,7 @@ class MainActivity : ComponentActivity() {
       GuidePhase.Error, GuidePhase.Recovering -> getString(R.string.ds_retry)
       GuidePhase.Starting, GuidePhase.Extracting -> getString(R.string.ds_starting)
       GuidePhase.Updating -> getString(R.string.ds_updating)
+      GuidePhase.Undoing -> getString(R.string.ds_undoing)
       GuidePhase.Idle -> getString(R.string.ds_start_engine)
     }
 
@@ -1283,7 +1314,7 @@ class MainActivity : ComponentActivity() {
     val dotColor = when (phase) {
       GuidePhase.Error, GuidePhase.Closed -> getColor(R.color.ds_danger)
       GuidePhase.Updating, GuidePhase.Extracting -> getColor(R.color.ds_warn)
-      GuidePhase.Starting, GuidePhase.Recovering -> getColor(R.color.ds_accent)
+      GuidePhase.Starting, GuidePhase.Recovering, GuidePhase.Undoing -> getColor(R.color.ds_accent)
       GuidePhase.Idle -> getColor(R.color.ds_text_tertiary)
     }
     chrome.statusDot.background = DsUi.oval(dotColor)
@@ -1296,6 +1327,7 @@ class MainActivity : ComponentActivity() {
     GuidePhase.Extracting -> "正在写入内嵌 Termux 环境，约 70MB。"
     GuidePhase.Updating -> "下载并校验快照后会自动切换运行时。"
     GuidePhase.Recovering -> "看门狗正在拉起引擎，通常几秒内恢复。"
+    GuidePhase.Undoing -> "正在把配置/插件回滚到最后良好快照（自动回撤）。"
     GuidePhase.Error -> "可打开控制台查看 engine.log，或点击重试。"
     GuidePhase.Closed -> "引擎已停止，不会自动恢复。"
     GuidePhase.Idle -> "引擎就绪后将进入 DeepCode。"
@@ -1392,6 +1424,45 @@ class MainActivity : ComponentActivity() {
    * embedded), else extract the embedded snapshot and start the embedded
    * engine, then poll until the web service answers.
    */
+  /** 引擎启动超时/失败后进入自动回撤流程：UndoGate 幂等，安全多次调用。 */
+  private fun maybeAutoUndo(generation: Long) {
+    if (userClosedEngine) return
+    Thread {
+      try {
+        // 引擎全死时先决门槛：急救 CLI 存在 + 快照非空 + 幂等窗口
+        if (!UndoGate.onProbeFailure(this, WatchdogV2.consecutiveFailures)) return@Thread
+        runOnUiThread {
+          applyGuidePhase(GuidePhase.Undoing, "正在执行回撤…", "正在恢复到崩溃前的最后良好快照。")
+        }
+        val result = UndoGate.execute(this, engineManager)
+        if (result.executed) {
+          // 恢复配置文件后重启引擎（冷却窗复位由 UndoGate 完成后置零）
+          runOnUiThread {
+            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
+            applyGuidePhase(GuidePhase.Recovering, "回撤完成，正在重启引擎…", "已恢复到快照 " + (result.snapshotId ?: "?"))
+          }
+          engineManager.resetCooldown()
+          if (isCurrentEngineFlow(generation)) engineManager.startEngine()
+          else EngineService.instance?.let { WatchdogV2.reset() }
+        } else {
+          runOnUiThread {
+            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
+            applyGuidePhase(GuidePhase.Error, "自动回撤不可用", result.summary.take(120))
+          }
+        }
+      } catch (t: Throwable) {
+        Log.e("dsh-shell", "auto-undo failed", t)
+      }
+    }.start()
+  }
+
+  /** 引擎启动超时（startEngineFlow 轮询失败后调用）：触发自动回撤。 */
+  private fun onEngineStartTimeout(generation: Long) {
+    // 先给看门狗一次机会：WatchdogV2 熔断阈值(12)远高于此处的保守阈值(6)，
+    // 因此本路径只在「启动即失败」时触发；正常慢启动不会到达这里。
+    maybeAutoUndo(generation)
+  }
+
   private fun startEngineFlow() {
     // onCreate and the following onResume can both request startup. Acquire the
     // flow before mutating lifecycle state so a duplicate cannot invalidate the
@@ -1450,12 +1521,15 @@ class MainActivity : ComponentActivity() {
         }
       }
       if (!isCurrentEngineFlow(generation)) return@Thread
+      // 急救 CLI 随 App 版本部署（内容比对幂等）：下探失败时自动回撤的前置依赖。
+      engineManager.deployUndoCli()
       if (!engineManager.startEngine()) {
         runOnUiThread {
           if (!isCurrentEngineFlow(generation)) return@runOnUiThread
           applyGuidePhase(GuidePhase.Error, "引擎启动失败")
           showGuide()
         }
+        maybeAutoUndo(generation)
         return@Thread
       }
       // Poll up to 30s for the web service.
@@ -1480,6 +1554,7 @@ class MainActivity : ComponentActivity() {
           applyGuidePhase(GuidePhase.Error, "引擎启动超时")
           showGuide()
         }
+      onEngineStartTimeout(generation)
       } finally {
         engineFlowRunning.set(false)
       }
