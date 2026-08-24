@@ -406,6 +406,12 @@ class MainActivity : ComponentActivity() {
     // 崩溃标记：进程级未捕获异常写入 filesDir/.crashed（下次启动测试界面
     // 提示），随后交回默认 handler——只记录，不吞异常、不阻止崩溃。
     installCrashMarker()
+    // 启动即 TTL 清扫临时工作区（issue #60 F5.1：7 天过期文件自动回收）
+    try { FileIncoming.sweepExpired(this) } catch (_: Throwable) {}
+    // 通知权限首启注册（issue #80 反馈实锤 2026-08-24）：Android 13+ POST_NOTIFICATIONS
+    // 默认拒绝——不主动请求则引擎任务完成/授权请求等 NotifyCenter 通知全部静默丢弃。
+    // 授权回调沿用 showTestNotification 的 launch（后果一致：拒绝即静默降级）。
+    registerNotificationAsync()
     val crashFile = File(filesDir, ".crashed")
     if (crashFile.exists()) {
       crashInfo = try { crashFile.readText() } catch (_: Exception) { null }
@@ -471,6 +477,8 @@ class MainActivity : ComponentActivity() {
       else -> null
     }
     if (uri == null) return
+    // 每次文件入队前先做 TTL 清扫（issue #60 F5.1：临时文件 7 天自动回收，防止无限堆积）
+    FileIncoming.sweepExpired(this)
     val validated = FileIncoming.validate(uri.toString(), this) ?: run {
       showTestNotification("文件直达被拒绝", "路径不在允许范围（仅系统打开/分享的真实路径）")
       return
@@ -508,6 +516,13 @@ class MainActivity : ComponentActivity() {
     if (!userClosedEngine) {
       engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
       engineMonitorHandler.post(engineMonitorRunnable)
+    }
+    // 2026-08-24 修复（真机实锤：通知链路不消费的根因）：startEngineService（foreground service
+    // + WatchdogV2 tick）此前只在 startEngineFlow 首次轮询成功时挂载——**引擎先跑、app 后启动
+    // （后台恢复/热启动）时服务从未启动 → watchdog 缺失 → 通知消费（task-done 标记）/自动回退
+    // /唤醒锁全链路失效**。onResume 幂等确保服务启动（已在跑则 no-op）。
+    if (!userClosedEngine) {
+      startEngineService()
     }
     // Back from the directory picker / Termux: re-route if the engine came up.
     // 仅当 WebView 未展示（引导页/首次启动）时才探测并重路由；相册/文件选择器
@@ -772,6 +787,7 @@ class MainActivity : ComponentActivity() {
           AdbState.pairWithCode(this, engineManager, code, pairPort, connectPort).ok
         },
         onRevokeAdbPair = { AdbState.revokePair(this, engineManager) },
+        onDiscoverAdbPorts = { AdbState.discoverPorts(engineManager).toString() },
       ),
       "androidBridge",
     )
@@ -1209,6 +1225,20 @@ class MainActivity : ComponentActivity() {
       }
     } catch (t: Throwable) {
       Log.e(TAG, "keepScreenOn failed: " + t.message)
+    }
+  }
+
+  /** 首启注册通知权限（issue #80 实锤 2026-08-24）：Android 13+ POST_NOTIFICATIONS 默认拒绝，
+   *  不主动请求则引擎任务完成/授权请求等 NotifyCenter 通知全部静默丢弃。仅在未授予时请求一次
+   *  （用户拒绝后不重复打扰；showTestNotification 仍会在用户主动触发时二次请求）。 */
+  private fun registerNotificationAsync() {
+    if (Build.VERSION.SDK_INT < 33) return
+    if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+      try {
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+      } catch (_: Throwable) {
+        // Activity 未就绪时忽略（下次启动再试）
+      }
     }
   }
 

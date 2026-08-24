@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
+import java.io.File
 
 /**
  * 看门狗升级（0.13.0 PRD F2/M3.4）：
@@ -53,7 +54,46 @@ object WatchdogV2 {
     // 桥端点仅用于对时状态采样；日志异常扫描才是探活退出面的信号（插件树近期变化
     // 由 engine.log 的 "plugin tree failed to load" 捕获）。
     val logOk = !engineLogShowsFailure(context)
+    // F0.3 事件桥消费（2026-08-24）：引擎任务完成标记 → 系统通知（探活成功才消费，避免引擎
+    // 挂死时误弹；消费幂等——读完即清）。
+    if (logOk) consumeTaskDoneMarkers(context)
     return base && logOk
+  }
+
+  /** 引擎事件桥标记文件（dsh-android-bridge 写入 home/.dsh/.task-done.ndjson；经 context 推导）。 */
+  private fun taskMarkerFile(context: Context): java.io.File =
+    java.io.File(File(context.filesDir, "home/.dsh"), ".task-done.ndjson")
+
+  /** 消费任务完成标记：逐行解析 → NotifyCenter 通知 → 清空标记（幂等；通知权限未授静默降级）。 */
+  private fun consumeTaskDoneMarkers(context: Context) {
+    val debugLog = java.io.File(context.filesDir, "notify-debug.log")
+    fun dbg(msg: String) { try { debugLog.appendText(System.currentTimeMillis().toString() + " " + msg + "\n") } catch (_: Exception) {} }
+    try {
+      val f = taskMarkerFile(context)
+      if (!f.exists() || f.length() == 0L) return
+      dbg("marker found, len=" + f.length())
+      val lines = f.readLines()
+      var notified = 0
+      for (line in lines) {
+        if (line.isBlank()) continue
+        dbg("line: " + line)
+        try {
+          val j = org.json.JSONObject(line)
+          val title = j.optString("title").ifBlank { "任务完成" }
+          val snippet = j.optString("text").ifBlank { "引擎已完成一轮任务处理" }
+          dbg("parsed title=" + title)
+          NotifyCenter.notify(context, "task", title, snippet)
+          notified++
+          dbg("notify returned ok")
+        } catch (e: Exception) {
+          dbg("notify threw: " + (e.message ?: e.javaClass.simpleName))
+        }
+      }
+      dbg("done notified=" + notified)
+      f.writeText("")
+    } catch (e: Exception) {
+      dbg("consume outer threw: " + (e.message ?: e.javaClass.simpleName))
+    }
   }
 
   /** 引擎日志尾部异常扫描（最近 4KB 内 fatal/Error 关键字；命中率控制：只取尾部）。 */

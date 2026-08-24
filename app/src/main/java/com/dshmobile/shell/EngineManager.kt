@@ -680,6 +680,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
         "SSL_CERT_FILE" to cert.absolutePath,
         "CURL_CA_BUNDLE" to cert.absolutePath,
         "GIT_SSL_CAINFO" to cert.absolutePath,
+        // 快照 node 编译期硬编码 OpenSSL 配置路径 /data/data/com.termux/...（app 域不可读）：
+        // 不注入则任何 node/npm 子进程启动即 OpenSSL configuration error 退出（agent 工具调用
+        // npm/node 全部失败，引擎本体侥幸存活）。与 UndoGate/AdbState 同一修复（坑 #5 统一到
+        // 引擎级 env，覆盖 agent 所有工具子进程，2026-08-24 真机实测实锤）。
+        "OPENSSL_CONF" to File(usrDir, "etc/tls/openssl.cnf").absolutePath,
       )
     } else emptyMap()
     return mapOf(

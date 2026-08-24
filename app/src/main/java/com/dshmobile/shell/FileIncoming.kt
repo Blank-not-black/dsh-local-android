@@ -139,6 +139,35 @@ object FileIncoming {
     }
   }
 
+  /** 临时文件保留窗口（PRD F5.1 / issue #60：「文件定时清理（如七天）」——不配置工作区时
+   *  临时工作区按 TTL 自动回收，避免无限堆积）。 */
+  private const val TTL_MS = 7L * 24 * 60 * 60 * 1000
+
+  /**
+   * 定时清理（TTL 7 天）：删除超过保留窗口的临时文件（含子目录）、以及超过窗口的历史会话元数据行。
+   * 幂等；在应用启动（onCreate）与每次文件入队前调用——不打扰未过期内容。
+   * onTaskRemoved 的 cleanupTmp 仍保留（进程被系统回收时的即时全清礼仪）。
+   */
+  fun sweepExpired(context: Context) {
+    try {
+      val dir = tmpWorkspace(context)
+      val now = System.currentTimeMillis()
+      val list = dir.listFiles() ?: return
+      var removed = 0
+      for (f in list) {
+        if (f.name == ".sessions") continue // 引擎侧队列元数据：由 claim 消费删除
+        val last = f.lastModified()
+        if (last > 0 && now - last > TTL_MS) {
+          if (f.delete() || !f.exists()) removed++
+        }
+      }
+      if (removed > 0) {
+        LogCollector.log("dsh-file-open", "temp workspace TTL sweep removed $removed expired file(s)")
+      }
+    } catch (_: Exception) {
+    }
+  }
+
   /** 清理本次临时会话与临时工作区内容（幂等；不阻塞进程退出——生命周期礼仪 F5.3）。 */
   fun cleanupTmp(context: Context) {
     try {

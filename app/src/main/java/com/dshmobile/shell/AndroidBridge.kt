@@ -41,6 +41,8 @@ class AndroidBridge(
   private val onSetAdbPair: (code: String, pairPort: Int, connectPort: Int) -> Boolean = { _, _, _ -> false },
   /** 0.13.0 F1.7：回收配对（R6：显式回收 + 审计）。 */
   private val onRevokeAdbPair: () -> Unit = {},
+  /** 0.14（issue #80）：自动发现无线调试端口（配对端口候选 JSONArray；原生 TCP 盲扫 + adb pair 确认）。 */
+  private val onDiscoverAdbPorts: () -> String = { "[]" },
 ) {
 
   @JavascriptInterface
@@ -191,6 +193,11 @@ class AndroidBridge(
   fun revokeAdbPair() {
     onRevokeAdbPair()
   }
+
+  /** 自动发现无线调试端口（issue #80）：返回配对端口候选 JSONArray（顺序端序）。
+   *  耗时为原生 TCP 盲扫（毫秒/端口）；无线调试未开时返回 []。 */
+  @JavascriptInterface
+  fun discoverAdbPorts(): String = onDiscoverAdbPorts()
 
   companion object {
     /**

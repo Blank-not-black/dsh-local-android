@@ -3,6 +3,7 @@ package com.dsharnessmobile.shell
 import android.content.Context
 import android.os.Build
 import android.os.Environment
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -61,6 +62,73 @@ object AdbState {
 
   /** 连接探活记录（配对/执行成功后置位；revoke 清位）。 */
   fun connected(context: Context): Boolean = prefs(context).getBoolean(KEY_CONNECTED, false)
+
+  /**
+   * 自动发现无线调试端口（issue #80 用户诉求 2026-08-24：「配对端口和连接端口不会自动扫描」）。
+   * 两级探测：
+   *   1. **系统属性直读（精确）**：无线调试开启时 adbd 把配对/连接端口暴露为
+   *      `service.adb.tls.pairing_port` 与 `service.adb.tls.port`（getprop 可读，app 域
+   *      SystemProperties 直接可取）——开的瞬间即可发现，零扫描开销。
+   *   2. TCP 盲扫兜底（属性缺失时）：127.0.0.1 的 37000–45999 段（Android 无线调试随机端口）
+   *      原生 connect 探测；命中后用快照 adb pair 语义确认（非配对端口 TLS 立即拒绝）。
+   * @return 结构 JSON："{\"pair\": <配对端口|null>, \"connect\": <连接端口|null>, \"candidates\": [...] }"。
+   *   discoverPorts 的桥返回给前端：pair/connect 精确填写，candidates 供参考。
+   */
+  fun discoverPorts(engine: EngineManager): String {
+    val out = JSONObject()
+      .put("pair", JSONObject.NULL)
+      .put("connect", JSONObject.NULL)
+      .put("candidates", JSONArray())
+    // 1. 系统属性直读（精确配对 + 连接端口）——无线调试开启即有效
+    try {
+      val cls = Class.forName("android.os.SystemProperties")
+      val get = cls.getMethod("get", String::class.java)
+      val pair = get.invoke(null, "service.adb.tls.pairing_port") as? String
+      val conn = get.invoke(null, "service.adb.tls.port") as? String
+      if (!pair.isNullOrBlank()) out.put("pair", pair.toIntOrNull() ?: JSONObject.NULL)
+      if (!conn.isNullOrBlank()) out.put("connect", conn.toIntOrNull() ?: JSONObject.NULL)
+    } catch (_: Throwable) {
+      /* 非 root/受限环境读不到属性：走盲扫兜底 */
+    }
+    // 2. 盲扫兜底（仅当属性一个都没读到）
+    if (out.opt("pair") == JSONObject.NULL && out.opt("connect") == JSONObject.NULL) {
+      val adb = File(engine.usrDir, "bin/adb").takeIf { it.exists() }
+      if (adb != null) {
+        val START = 37000; val END = 45999; val STEP = 19
+        val coarse = mutableListOf<Int>()
+        var p = START
+        while (p <= END) {
+          if (tcpOpen(p)) coarse.add(p)
+          p += STEP
+        }
+        val raw = sortedSetOf<Int>()
+        for (c in coarse) {
+          for (q in (c - STEP).coerceAtLeast(START)..(c + STEP).coerceAtMost(END)) {
+            if (tcpOpen(q)) raw.add(q)
+          }
+        }
+        val arr = JSONArray()
+        for (q in raw) {
+          val text = runAdb(engine, listOf("pair", "127.0.0.1:$q", "000000"), 5).joinToString("\n")
+          if (text.contains("authenticate") || text.contains("pair")) arr.put(q)
+        }
+        out.put("candidates", arr)
+      }
+    }
+    return out.toString()
+  }
+
+  /** 原生 TCP 探活（connect 成功即视为监听端口；超时 120ms——本地环回毫秒级往返）。 */
+  private fun tcpOpen(port: Int): Boolean {
+    return try {
+      val s = java.net.Socket()
+      s.connect(java.net.InetSocketAddress("127.0.0.1", port), 120)
+      s.close()
+      true
+    } catch (_: Exception) {
+      false
+    }
+  }
 
   private fun adbBin(context: Context): File? =
     File(File(context.filesDir, "usr"), "bin/adb").takeIf { it.exists() }

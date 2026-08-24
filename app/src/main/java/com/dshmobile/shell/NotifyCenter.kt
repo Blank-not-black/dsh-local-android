@@ -46,11 +46,15 @@ object NotifyCenter {
 
   fun notify(context: Context, category: String, title: String, text: String, target: String? = null) {
     val app = context.applicationContext
-    if (!enabled(app, category)) return
+    if (!enabled(app, category)) {
+      LogCollector.log("dsh-notify", "notify skipped (category disabled): $category")
+      return
+    }
     if (Build.VERSION.SDK_INT >= 33 &&
-      context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+      app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
       android.content.pm.PackageManager.PERMISSION_GRANTED
     ) {
+      LogCollector.log("dsh-notify", "notify skipped (POST_NOTIFICATIONS not granted): $category")
       return // 未授予：静默降级（调用方界面内提示；不崩溃）
     }
     val manager = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -78,8 +82,14 @@ object NotifyCenter {
     val pending = PendingIntent.getActivity(
       app, channelId.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
+    val notifId = ("dsh-" + category).hashCode() and 0x7fffffff
+    LogCollector.log("dsh-notify", "notify: $category / $notifId / $title")
+    android.util.Log.e("dsh-notify", "notify called: $category / $notifId / $title / perm=" +
+      (Build.VERSION.SDK_INT < 33 ||
+        app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED))
     manager.notify(
-      channelId.hashCode(),
+      notifId,
       NotificationCompat.Builder(app, channelId)
         .setSmallIcon(android.R.drawable.stat_notify_chat)
         .setContentTitle(title)
