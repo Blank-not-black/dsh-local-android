@@ -7,6 +7,11 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <!-- 0.13.0 F2/M3.4：开机自启（恢复用户同意的状态）与前台唤醒锁（标准档位）；电池优化白名单引导。 -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
   <application
     android:label="@string/app_name"
@@ -19,6 +24,15 @@
       android:exported="false"
       android:foregroundServiceType="dataSync" />
 
+    <!-- 0.13.0 F2/M3.4：开机自启接收器（恢复用户上次同意的运行状态；restart 后需已启动过）。 -->
+    <receiver
+      android:name=".BootReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+      </intent-filter>
+    </receiver>
+
     <activity
       android:name=".MainActivity"
       android:exported="true"
@@ -27,6 +41,25 @@
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+      <!-- 0.13.0 F5（M3.5）：系统「使用其他应用打开」+ 分享面板入口（D14 查看与分享都支持）。 -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="application/pdf" />
+        <data android:mimeType="application/zip" />
+        <data android:mimeType="application/json" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="video/*" />
+        <data android:scheme="content" />
+        <data android:scheme="file" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="*/*" />
       </intent-filter>
     </activity>
 

@@ -30,6 +30,19 @@ class AndroidBridge(
   private val onGetDevLogEnabled: () -> Boolean = { false },
   private val onSetDevLogEnabled: (Boolean) -> Unit = {},
   private val onOpenNativePath: (path: String) -> Boolean = { false },
+  /** 0.13.0 F1.7：ADB shell 执行原语（授权时执行；未授权失败关闭返回引导 JSON）。 */
+  private val onAdbShell: (cmd: String) -> String = { _ -> "" },
+  /** 0.13.0 F1.7：授权状态 JSON（三道人门状态视图，供设置页/授权状态探活）。 */
+  private val onGetAdbState: () -> String = { "{}" },
+  /** 0.13.0 F1.7：应用内「允许访问」开关（第二道人门；默认关闭；回收即失效）。 */
+  private val onSetAdbAllow: (enable: Boolean) -> Unit = {},
+  /** 0.13.0 F1.7：门3 配对码（6 位）；仅原生侧可写授权（被提权方自改授权被禁止——Shizuku 对照）。
+   *  0.14：真实握手——pairPort/connectPort 取自系统「无线调试」弹窗（码值只进 adb argv，绝不出壳）。 */
+  private val onSetAdbPair: (code: String, pairPort: Int, connectPort: Int) -> Boolean = { _, _, _ -> false },
+  /** 0.13.0 F1.7：回收配对（R6：显式回收 + 审计）。 */
+  private val onRevokeAdbPair: () -> Unit = {},
+  /** 0.14（issue #80）：自动发现无线调试端口（配对端口候选 JSONArray；原生 TCP 盲扫 + adb pair 确认）。 */
+  private val onDiscoverAdbPorts: () -> String = { "[]" },
 ) {
 
   @JavascriptInterface
@@ -151,6 +164,40 @@ class AndroidBridge(
    */
   @JavascriptInterface
   fun openNativePath(path: String): Boolean = onOpenNativePath(path)
+
+  /** ADB shell 执行原语（F1.7）：返回 JSON {ok, stdout?, stderr?, guidance?}。
+   *  未授权/门控不满足 → fail-closed（绝不静默执行）。 */
+  @JavascriptInterface
+  fun adbShell(cmd: String): String = onAdbShell(cmd)
+
+  /** 授权状态视图（F1.7/F2.9 授权探活）：JSON {fullAccess, allowSwitch, paired, wirelessDebugOn, message}。 */
+  @JavascriptInterface
+  fun getAdbState(): String = onGetAdbState()
+
+  /** 应用内「允许访问」开关（第二道人门；默认关闭；关闭即通道失败关闭）。 */
+  @JavascriptInterface
+  fun setAdbAllow(enable: Boolean) {
+    onSetAdbAllow(enable)
+  }
+
+  /**
+   * 门3 配对码：六位数字 + 无线调试弹窗的「配对端口/连接端口」；
+   * AdbState 运行真实 adb pair 握手（码值不入审计，只记长度）。返回是否配对成功。
+   */
+  @JavascriptInterface
+  fun setAdbPair(code: String, pairPort: Int, connectPort: Int): Boolean =
+    onSetAdbPair(code, pairPort, connectPort)
+
+  /** 回收配对（R6 显式回收；配套审计）。 */
+  @JavascriptInterface
+  fun revokeAdbPair() {
+    onRevokeAdbPair()
+  }
+
+  /** 自动发现无线调试端口（issue #80）：返回配对端口候选 JSONArray（顺序端序）。
+   *  耗时为原生 TCP 盲扫（毫秒/端口）；无线调试未开时返回 []。 */
+  @JavascriptInterface
+  fun discoverAdbPorts(): String = onDiscoverAdbPorts()
 
   companion object {
     /**

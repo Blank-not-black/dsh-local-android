@@ -330,15 +330,22 @@ class MainActivity : ComponentActivity() {
   /**
    * 用外部阅读器打开文件路径（issue #52）：引擎 native-path-opener 仅支持
    * mac/win/linux，Android 上文件提及按钮会失败。路径解析：
-   * - /storage/emulated/0/...（公共目录，MANAGE_EXTERNAL_STORAGE 已授）→ FileProvider content Uri
-   * - 应用私有目录（filesDir 等）→ FileProvider content Uri
-   * - 其他（content:// 或不可读）→ false，前端回退引擎 RPC（桌面宿主行为）
+   * - /storage/emulated/0/Documents/dshdata/...（导出仓库）→ FileProvider content Uri
+   * - 应用私有文件区（工作区/usr/bin）→ FileProvider content Uri
+   * - 其他（content://、不可读、或私密区路径如 .dsh/.credentials.yaml）→ false，
+   *   前端回退引擎 RPC（桌面宿主行为）。
+   * 安全（2026-08-23 CRITICAL 修复）：运行时白名单 canonical 校验，与
+   * res/xml/file_paths.xml 的映射面一致——FileProvider 若配到更宽路径也会被此层拦截。
    */
   private fun openNativePathWithReader(path: String): Boolean {
     return try {
       val file = java.io.File(path)
       if (!file.exists()) {
         Log.w("dsh-image", "openNativePath: not exists: $path")
+        return false
+      }
+      if (!isReaderAllowedPath(file)) {
+        Log.w("dsh-image", "openNativePath rejected (outside reader whitelist): $path")
         return false
       }
       val uri = androidx.core.content.FileProvider.getUriForFile(
@@ -352,6 +359,22 @@ class MainActivity : ComponentActivity() {
       true
     } catch (e: Exception) {
       Log.w("dsh-image", "openNativePath failed: $path -> ${e.message}")
+      false
+    }
+  }
+
+  /** 外部阅读器白名单（与 res/xml/file_paths.xml 映射面一致；canonical 比较防 symlink/.. 逃逸）。 */
+  private fun isReaderAllowedPath(file: java.io.File): Boolean {
+    return try {
+      val canon = file.canonicalPath
+      val roots = listOf(
+        java.io.File(filesDir, "home/.dsh/workspaces"),
+        java.io.File(filesDir, "home/tmp"),
+        java.io.File(filesDir, "usr/bin"),
+        java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "dshdata"),
+      ).map { it.canonicalPath }
+      roots.any { root -> canon == root || canon.startsWith(root + java.io.File.separator) }
+    } catch (_: Exception) {
       false
     }
   }
@@ -383,6 +406,12 @@ class MainActivity : ComponentActivity() {
     // 崩溃标记：进程级未捕获异常写入 filesDir/.crashed（下次启动测试界面
     // 提示），随后交回默认 handler——只记录，不吞异常、不阻止崩溃。
     installCrashMarker()
+    // 启动即 TTL 清扫临时工作区（issue #60 F5.1：7 天过期文件自动回收）
+    try { FileIncoming.sweepExpired(this) } catch (_: Throwable) {}
+    // 通知权限首启注册（issue #80 反馈实锤 2026-08-24）：Android 13+ POST_NOTIFICATIONS
+    // 默认拒绝——不主动请求则引擎任务完成/授权请求等 NotifyCenter 通知全部静默丢弃。
+    // 授权回调沿用 showTestNotification 的 launch（后果一致：拒绝即静默降级）。
+    registerNotificationAsync()
     val crashFile = File(filesDir, ".crashed")
     if (crashFile.exists()) {
       crashInfo = try { crashFile.readText() } catch (_: Exception) { null }
@@ -430,9 +459,56 @@ class MainActivity : ComponentActivity() {
     if (intent?.action == ACTION_UPDATE) {
       runUpdate()
     } else {
+      maybeProcessIncoming(intent)
       startEngineFlow()
     }
   }
+
+  /**
+   * 文件直达（0.13.0 F5/M3.5）：VIEW/SEND 意图 → 校验净化 → 拷贝临时工作区 → 通知引擎侧插件。
+   * 外部路径不留原件引用（一律拷贝，权限模型对齐 F1.8）；引擎未启动先启动（启动流先于通知）。
+   */
+  private fun maybeProcessIncoming(intent: Intent?) {
+    if (intent == null) return
+    val action = intent.action
+    val uri: Uri? = when (action) {
+      Intent.ACTION_VIEW -> intent.data
+      Intent.ACTION_SEND -> intent.getParcelableExtra(Intent.EXTRA_STREAM)
+      else -> null
+    }
+    if (uri == null) return
+    // 每次文件入队前先做 TTL 清扫（issue #60 F5.1：临时文件 7 天自动回收，防止无限堆积）
+    FileIncoming.sweepExpired(this)
+    val validated = FileIncoming.validate(uri.toString(), this) ?: run {
+      showTestNotification("文件直达被拒绝", "路径不在允许范围（仅系统打开/分享的真实路径）")
+      return
+    }
+    val target = FileIncoming.copyIn(this, validated) ?: run {
+      showTestNotification("文件拷贝失败", "无法读取传入文件")
+      return
+    }
+    FileIncoming.recordOpening(this, target.absolutePath)
+    LogCollector.log("dsh-file-open", "incoming processed: " + target.absolutePath)
+    // 引擎侧插件端点：路径交给 dsh-android-file-open 强制新会话（引擎未起时端点由启动流承托）。
+    Thread {
+      try {
+        val conn = java.net.URL("http://127.0.0.1:3080/api/android/file-incoming").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 3000
+        val body = org.json.JSONObject().put("path", target.absolutePath).toString()
+        conn.outputStream.use { it.write(body.toByteArray()) }
+        conn.responseCode
+        conn.disconnect()
+      } catch (_: Exception) {
+      }
+    }.start()
+  }
+
+  /** 任务移除清理见 EngineService.onTaskRemoved（生命周期礼仪 F5.3：让位+尽力清理，不反弹）。 */
+
+  /** 首启向导已移除（决策 2026-08-23）：初始页（GuideChrome 运行时状态/解压进度/崩溃/日志）
+   *  已足够承载首启信息；配置项（共享目录/镜像/ADB 授权）经设置面与「工具与环境」页承托。 */
 
   override fun onResume() {
     super.onResume()
@@ -440,6 +516,13 @@ class MainActivity : ComponentActivity() {
     if (!userClosedEngine) {
       engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
       engineMonitorHandler.post(engineMonitorRunnable)
+    }
+    // 2026-08-24 修复（真机实锤：通知链路不消费的根因）：startEngineService（foreground service
+    // + WatchdogV2 tick）此前只在 startEngineFlow 首次轮询成功时挂载——**引擎先跑、app 后启动
+    // （后台恢复/热启动）时服务从未启动 → watchdog 缺失 → 通知消费（task-done 标记）/自动回退
+    // /唤醒锁全链路失效**。onResume 幂等确保服务启动（已在跑则 no-op）。
+    if (!userClosedEngine) {
+      startEngineService()
     }
     // Back from the directory picker / Termux: re-route if the engine came up.
     // 仅当 WebView 未展示（引导页/首次启动）时才探测并重路由；相册/文件选择器
@@ -659,7 +742,7 @@ class MainActivity : ComponentActivity() {
       AndroidBridge(
         onPickRequest = { callbackId -> pickDirectoryWithPermissionCheck(callbackId) },
         onKeepScreen = { enable -> keepScreenOn(enable) },
-        onNotify = { title, text -> showTestNotification(title, text) },
+        onNotify = { title, text -> NotifyCenter.notify(this, "task", title, text) },
         onAllFilesAccessRequest = { openAllFilesAccessSettings() },
         onDebugLogsRequest = { downloadDebugLogs() },
         onGetSystemDark = {
@@ -696,6 +779,15 @@ class MainActivity : ComponentActivity() {
           }
         },
         onOpenNativePath = { path -> openNativePathWithReader(path) },
+        onAdbShell = { cmd -> AdbState.adbShellExecute(this, engineManager, cmd) },
+        onGetAdbState = { AdbState.stateJson(this) },
+        onSetAdbAllow = { enable -> AdbState.setAllowSwitch(this, enable) },
+        // 0.14 真实配对：码值只经 adb argv（壳侧），端口取自系统「无线调试」弹窗；配对成功才写 paired。
+        onSetAdbPair = { code, pairPort, connectPort ->
+          AdbState.pairWithCode(this, engineManager, code, pairPort, connectPort).ok
+        },
+        onRevokeAdbPair = { AdbState.revokePair(this, engineManager) },
+        onDiscoverAdbPorts = { AdbState.discoverPorts(engineManager).toString() },
       ),
       "androidBridge",
     )
@@ -1136,6 +1228,20 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** 首启注册通知权限（issue #80 实锤 2026-08-24）：Android 13+ POST_NOTIFICATIONS 默认拒绝，
+   *  不主动请求则引擎任务完成/授权请求等 NotifyCenter 通知全部静默丢弃。仅在未授予时请求一次
+   *  （用户拒绝后不重复打扰；showTestNotification 仍会在用户主动触发时二次请求）。 */
+  private fun registerNotificationAsync() {
+    if (Build.VERSION.SDK_INT < 33) return
+    if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+      try {
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+      } catch (_: Throwable) {
+        // Activity 未就绪时忽略（下次启动再试）
+      }
+    }
+  }
+
   private fun showTestNotification(title: String, text: String) {
     if (Build.VERSION.SDK_INT >= 33 &&
       checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -1201,7 +1307,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private enum class GuidePhase { Idle, Starting, Extracting, Updating, Recovering, Error, Closed }
+  private enum class GuidePhase { Idle, Starting, Extracting, Updating, Recovering, Undoing, Error, Closed }
 
   private fun applyGuidePhase(phase: GuidePhase, title: String, hint: String? = null) {
     lastGuidePhase = phase
@@ -1213,10 +1319,12 @@ class MainActivity : ComponentActivity() {
     val busy = phase == GuidePhase.Starting ||
       phase == GuidePhase.Extracting ||
       phase == GuidePhase.Updating ||
-      phase == GuidePhase.Recovering
+      phase == GuidePhase.Recovering ||
+      phase == GuidePhase.Undoing
     val lockPrimary = phase == GuidePhase.Starting ||
       phase == GuidePhase.Extracting ||
-      phase == GuidePhase.Updating
+      phase == GuidePhase.Updating ||
+      phase == GuidePhase.Undoing
     chrome.primaryButton.isEnabled = !lockPrimary
     chrome.primaryButton.alpha = if (lockPrimary) 0.55f else 1f
     chrome.primaryButton.text = when (phase) {
@@ -1224,6 +1332,7 @@ class MainActivity : ComponentActivity() {
       GuidePhase.Error, GuidePhase.Recovering -> getString(R.string.ds_retry)
       GuidePhase.Starting, GuidePhase.Extracting -> getString(R.string.ds_starting)
       GuidePhase.Updating -> getString(R.string.ds_updating)
+      GuidePhase.Undoing -> getString(R.string.ds_undoing)
       GuidePhase.Idle -> getString(R.string.ds_start_engine)
     }
 
@@ -1235,7 +1344,7 @@ class MainActivity : ComponentActivity() {
     val dotColor = when (phase) {
       GuidePhase.Error, GuidePhase.Closed -> getColor(R.color.ds_danger)
       GuidePhase.Updating, GuidePhase.Extracting -> getColor(R.color.ds_warn)
-      GuidePhase.Starting, GuidePhase.Recovering -> getColor(R.color.ds_accent)
+      GuidePhase.Starting, GuidePhase.Recovering, GuidePhase.Undoing -> getColor(R.color.ds_accent)
       GuidePhase.Idle -> getColor(R.color.ds_text_tertiary)
     }
     chrome.statusDot.background = DsUi.oval(dotColor)
@@ -1248,6 +1357,7 @@ class MainActivity : ComponentActivity() {
     GuidePhase.Extracting -> "正在写入内嵌 Termux 环境，约 70MB。"
     GuidePhase.Updating -> "下载并校验快照后会自动切换运行时。"
     GuidePhase.Recovering -> "看门狗正在拉起引擎，通常几秒内恢复。"
+    GuidePhase.Undoing -> "正在把配置/插件回滚到最后良好快照（自动回撤）。"
     GuidePhase.Error -> "可打开控制台查看 engine.log，或点击重试。"
     GuidePhase.Closed -> "引擎已停止，不会自动恢复。"
     GuidePhase.Idle -> "引擎就绪后将进入 DeepCode。"
@@ -1344,6 +1454,45 @@ class MainActivity : ComponentActivity() {
    * embedded), else extract the embedded snapshot and start the embedded
    * engine, then poll until the web service answers.
    */
+  /** 引擎启动超时/失败后进入自动回撤流程：UndoGate 幂等，安全多次调用。 */
+  private fun maybeAutoUndo(generation: Long) {
+    if (userClosedEngine) return
+    Thread {
+      try {
+        // 引擎全死时先决门槛：急救 CLI 存在 + 快照非空 + 幂等窗口
+        if (!UndoGate.onProbeFailure(this, WatchdogV2.consecutiveFailures)) return@Thread
+        runOnUiThread {
+          applyGuidePhase(GuidePhase.Undoing, "正在执行回撤…", "正在恢复到崩溃前的最后良好快照。")
+        }
+        val result = UndoGate.execute(this, engineManager)
+        if (result.executed) {
+          // 恢复配置文件后重启引擎（冷却窗复位由 UndoGate 完成后置零）
+          runOnUiThread {
+            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
+            applyGuidePhase(GuidePhase.Recovering, "回撤完成，正在重启引擎…", "已恢复到快照 " + (result.snapshotId ?: "?"))
+          }
+          engineManager.resetCooldown()
+          if (isCurrentEngineFlow(generation)) engineManager.startEngine()
+          else EngineService.instance?.let { WatchdogV2.reset() }
+        } else {
+          runOnUiThread {
+            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
+            applyGuidePhase(GuidePhase.Error, "自动回撤不可用", result.summary.take(120))
+          }
+        }
+      } catch (t: Throwable) {
+        Log.e("dsh-shell", "auto-undo failed", t)
+      }
+    }.start()
+  }
+
+  /** 引擎启动超时（startEngineFlow 轮询失败后调用）：触发自动回撤。 */
+  private fun onEngineStartTimeout(generation: Long) {
+    // 先给看门狗一次机会：WatchdogV2 熔断阈值(12)远高于此处的保守阈值(6)，
+    // 因此本路径只在「启动即失败」时触发；正常慢启动不会到达这里。
+    maybeAutoUndo(generation)
+  }
+
   private fun startEngineFlow() {
     // onCreate and the following onResume can both request startup. Acquire the
     // flow before mutating lifecycle state so a duplicate cannot invalidate the
@@ -1402,12 +1551,15 @@ class MainActivity : ComponentActivity() {
         }
       }
       if (!isCurrentEngineFlow(generation)) return@Thread
+      // 急救 CLI 随 App 版本部署（内容比对幂等）：下探失败时自动回撤的前置依赖。
+      engineManager.deployUndoCli()
       if (!engineManager.startEngine()) {
         runOnUiThread {
           if (!isCurrentEngineFlow(generation)) return@runOnUiThread
           applyGuidePhase(GuidePhase.Error, "引擎启动失败")
           showGuide()
         }
+        maybeAutoUndo(generation)
         return@Thread
       }
       // Poll up to 30s for the web service.
@@ -1432,6 +1584,7 @@ class MainActivity : ComponentActivity() {
           applyGuidePhase(GuidePhase.Error, "引擎启动超时")
           showGuide()
         }
+      onEngineStartTimeout(generation)
       } finally {
         engineFlowRunning.set(false)
       }

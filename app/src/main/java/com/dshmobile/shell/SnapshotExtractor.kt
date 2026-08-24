@@ -1,5 +1,6 @@
 package com.dsharnessmobile.shell
 
+import android.util.Log
 import java.io.File
 import java.io.InputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -31,14 +32,29 @@ object SnapshotExtractor {
     val xz = XZCompressorInputStream(input)
     val tar = TarArchiveInputStream(xz)
     val execFiles = mutableListOf<String>()
+    val destCanon = dest.canonicalPath
     var done = 0L
     var entry: TarArchiveEntry? = tar.nextEntry
     while (entry != null) {
-      val target = File(dest, entry.name)
+      // 路径穿越防护（2026-08-23 安全审计 CRITICAL 修复）：拒绝绝对路径/../ 越界 /
+      // 符号链接逃逸——在线更新快照由明文 HTTP（可篡改）路径提供，此层是沙盒边界。
+      val target = resolveEntry(dest, destCanon, entry)
+      if (target == null) {
+        Log.w("dsh-snap", "skipping unsafe tar entry: " + entry.name)
+        entry = tar.nextEntry
+        continue
+      }
       when {
         entry.isDirectory -> target.mkdirs()
         entry.isSymbolicLink -> {
           target.parentFile?.mkdirs()
+          // 符号链接目标必须也落在解压根内（不解析绝对链接/越界相对链接）。
+          val linkCanon = java.io.File(target.parentFile, entry.linkName).canonicalPath
+          if (!linkCanon.startsWith(destCanon + File.separator)) {
+            Log.w("dsh-snap", "skipping unsafe symlink: " + entry.name + " -> " + entry.linkName)
+            entry = tar.nextEntry
+            continue
+          }
           // deleteIfExists does not follow links: on an overwrite re-extract an old symlink may be
           // dangling (File.exists() follows links, returning false for dangling ones, so the stale
           // link would survive and createSymbolicLink would throw FileAlreadyExistsException —
@@ -75,6 +91,20 @@ object SnapshotExtractor {
     }
     tar.close()
     stampExecAttribute(execFiles)
+  }
+
+  /** 解析 tar 条目到解压根内目标：拒绝绝对路径、../ 越界；返回 null 表示应跳过该条目。 */
+  private fun resolveEntry(dest: File, destCanon: String, entry: TarArchiveEntry): File? {
+    val name = entry.name.replace('\\', '/').trimStart('/')
+    if (name.isEmpty() || name.contains("..")) return null
+    val target = File(dest, name)
+    return try {
+      // canonicalPath 解析存在的父目录段；目标本身尚未创建时用父目录判定。
+      val parentCanon = (target.parentFile?.canonicalPath ?: destCanon)
+      if (parentCanon.startsWith(destCanon + File.separator) || parentCanon == destCanon) target else null
+    } catch (_: Exception) {
+      null
+    }
   }
 
   /** Stamp the Android exec attribute on all extracted executables. */

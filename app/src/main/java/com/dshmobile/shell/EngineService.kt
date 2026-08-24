@@ -39,9 +39,21 @@ class EngineService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
+  /** 任务移除（生命周期礼仪 F5.3）：允许进程结束，尽力清理本次文件直达临时会话/工作区，
+   *  不启动任何隐藏复活（不反弹）；后台阶段保活不受影响（见 F2 主题）。 */
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    try {
+      FileIncoming.cleanupTmp(this)
+      LogCollector.log("dsh-file-open", "onTaskRemoved: temp cleanup done (no resurrection)")
+    } catch (_: Exception) {
+    }
+    super.onTaskRemoved(rootIntent)
+  }
+
   override fun onDestroy() {
     watchdog?.shutdownNow()
     watchdog = null
+    WatchdogV2.releaseWakeLock()
     if (instance === this) instance = null
     // Log collection stops when the service exits (in-process idempotent singleton; also stopped when the toggle is off).
     LogCollector.stop()
@@ -57,19 +69,50 @@ class EngineService : Service() {
     }
   }
 
-  /** Start the engine if not running, then arm the watchdog. */
+  /**
+   * Start the engine if not running, then arm the watchdog. v2 (PRD F2-4):
+   * the watchdog is installed in EVERY state — the previous early return for a
+   * running engine left no watcher, so a later process death went unnoticed
+   * until the user interacted. The tick also feeds the update-v2 confirmation/
+   * rollback state machine (PRD F3.2/F1.10).
+   */
   private fun ensureEngine() {
-    if (EngineProbe.check().optBoolean("running", false)) return
-    if (engineManager.engineReady && engineManager.startEngine()) {
-      // Watchdog: poll every 5s; if the engine process dies, restart it.
-      if (watchdog == null) {
-        watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
-          exec.scheduleWithFixedDelay({
-            if (!EngineProbe.check().optBoolean("running", false) && engineManager.engineReady) {
-              engineManager.startEngine()
+    if (!engineManager.engineReady) return
+    if (watchdog == null) {
+      WatchdogV2.acquireWakeLock(this)
+      watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
+        exec.scheduleWithFixedDelay({
+          // 深度探活（PRD F2-5）：HTTP + 插件端点 + 引擎日志异常；熔断退避（F2-6/7）。
+          if (WatchdogV2.tripped()) {
+            // 熔断：暂停重启尝试（界面提示由 GuideChrome 状态区显示）；用户交互复位。
+            LogCollector.log("dsh-watchdog", "watchdog tripped: consecutive failure burst; paused")
+            return@scheduleWithFixedDelay
+          }
+          val healthy = WatchdogV2.deepProbe(this)
+          engineManager.onEngineProbe(healthy)
+          WatchdogV2.recordProbe(healthy)
+          // 唤醒锁续期：engine 常驻超过 30min 后半段无锁（acquire 定时释放）
+          WatchdogV2.refreshWakeLock(this)
+          if (!healthy && engineManager.engineReady) {
+            engineManager.startEngine()
+            // F3 自动回撤（D6 方案 a）：看门狗连续失败达到阈值（熔断前）时，
+            // 触发急救 CLI 恢复最后良好快照；UndoGate 幂等 + 防循环。
+            if (UndoGate.onProbeFailure(this, WatchdogV2.consecutiveFailures)) {
+              LogCollector.log("dsh-watchdog", "auto-undo trigger: cons_fail=" + WatchdogV2.consecutiveFailures)
+              Thread {
+                val result = UndoGate.execute(this, engineManager)
+                if (result.executed) {
+                  LogCollector.log("dsh-watchdog", "auto-undo ok -> " + (result.snapshotId ?: "?"))
+                  engineManager.resetCooldown()
+                  engineManager.startEngine()
+                } else {
+                  LogCollector.log("dsh-watchdog", "auto-undo not executed: " + result.summary.take(160))
+                }
+              }.start()
             }
-          }, 5, 5, TimeUnit.SECONDS)
-        }
+            LogCollector.log("dsh-watchdog", "restart attempt after failure #" + WatchdogV2.consecutiveFailures + " (backoff: " + WatchdogV2.nextDelayMs() + "ms advisory)")
+          }
+        }, 5, 5, TimeUnit.SECONDS)
       }
     }
   }

@@ -1,6 +1,7 @@
 package com.dsharnessmobile.shell
 
 import android.content.Context
+import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -31,19 +32,20 @@ class UpdateManager(private val context: Context) {
         onStatus("检查更新…")
         val manifest = JSONObject(fetch(manifestUrl))
         val url = manifest.getString("url")
-        val expectedSha = manifest.optString("sha256", "")
+        // 完整性加固（2026-08-23，审核 A6/B5）：在线更新快照可被中间人篡改——
+        // manifest 必须带 sha256 才能应用（空值拒绝），下载按声明大小限流。
+        val expectedSha = manifest.getString("sha256")
+        val declaredSize = manifest.optLong("size", 0)
 
-        onStatus("下载快照（" + (manifest.optLong("size", 0) / 1024 / 1024) + " MB）…")
+        onStatus("下载快照（" + (declaredSize / 1024 / 1024) + " MB）…")
         val tmp = File(context.filesDir, "update.tar.xz")
-        download(url, tmp)
+        download(url, tmp, declaredSize)
 
-        if (expectedSha.isNotEmpty()) {
-          onStatus("校验…")
-          val actual = sha256(tmp)
-          if (!actual.equals(expectedSha, ignoreCase = true)) {
-            tmp.delete()
-            throw IllegalStateException("SHA256 不匹配: " + actual.take(12) + "…")
-          }
+        onStatus("校验…")
+        val actual = sha256(tmp)
+        if (!actual.equals(expectedSha, ignoreCase = true)) {
+          tmp.delete()
+          throw IllegalStateException("SHA256 不匹配: " + actual.take(12) + "…")
         }
 
         onStatus("解压新快照…")
@@ -62,9 +64,19 @@ class UpdateManager(private val context: Context) {
         val old = File(context.filesDir, "usr-old")
         deleteRecursively(old)
         if (usr.exists()) usr.renameTo(old)
-        if (!newUsr.renameTo(usr)) throw IllegalStateException("切换失败")
+        if (!newUsr.renameTo(usr)) {
+          // 切换失败：立即回退旧代，不留半更新状态（PRD F3.2 第二层回退语义）。
+          if (old.exists() && !old.renameTo(usr)) {
+            Log.e("dsh-update", "swap failed and rollback failed; old runtime at usr-old: " + old.absolutePath)
+          }
+          throw IllegalStateException("切换失败（已回退旧代）")
+        }
         deleteRecursively(stage)
-        deleteRecursively(old)
+        // 更新管理器第二版（PRD F3.2/F1.10）：保留上一版运行时（usr-old），
+        // 由 EngineManager 探活确认（连续 N 次健康）后清理；超窗未健康自动回退旧代。
+        // 原子切换联动 F3 最后已知良好状态语义：pending 标记是回退状态机的输入。
+        File(context.filesDir, ".update-pending").writeText("1")
+        File(context.filesDir, ".update-pending-at").writeText(System.currentTimeMillis().toString())
 
         // Kill the old engine process: the EngineService watchdog restarts
         // it from the NEW usr within seconds.
@@ -94,13 +106,18 @@ class UpdateManager(private val context: Context) {
     return conn.inputStream.bufferedReader().use { it.readText() }
   }
 
-  private fun download(url: String, dest: File) {
+  private fun download(url: String, dest: File, declaredSize: Long = 0) {
     val conn = URL(url).openConnection() as HttpURLConnection
     conn.connectTimeout = 10_000
     conn.readTimeout = 60_000
     val code = conn.responseCode
     if (code != 200) throw IllegalStateException("下载 HTTP $code")
     conn.inputStream.use { input -> dest.outputStream().use { out -> input.copyTo(out) } }
+    // 大小限流（审核 B5 加固）：声明 size 存在且实际超限 → 删除并拒绝
+    if (declaredSize > 0 && dest.length() > declaredSize + 16 * 1024 * 1024) {
+      dest.delete()
+      throw IllegalStateException("下载体积超限: " + dest.length() + " > " + declaredSize)
+    }
   }
 
   private fun sha256(file: File): String {
