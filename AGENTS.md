@@ -1,4 +1,4 @@
-# AGENT.md — dsh-mobile-apk 开发地图
+# AGENT.md — dsh-local-android 开发地图
 
 > **AI 主动更新条款（必须最先执行）**：本文件面向人类与 AI 开发助手，是唯一权威的仓库开发地图。**任何代码变更导致本文件描述失真（文件作用、函数签名、桥协议、构建命令、关键实现落点）时，AI 必须在本轮同步更新本文件，并在文末「更新记录表」登记（时间 + 版本号）。** 变更未触及本文件描述范围时无需更新（避免无意义改写）。若发现本文件与源码不一致，以源码为准并当场修正本文件——不要忽略。
 >
@@ -8,13 +8,14 @@
 
 ## 1. 仓库概览与技术栈
 
-- **角色**：DeepSeek Harness 安卓壳应用（包名 `com.dsharnessmobile.shell`）。
-- **职责边界**：只保留安卓平台权能与桥——前台服务、看门狗、WebView、SAF 桥、快照解压与更新、崩溃回退闸门（UndoGate）、ADB 授权原生写面（AdbState）、审计、内置控制台、日志。**AI 可见能力全部来自插件**。
+- **角色**：DeepSeek Harness 安卓本地发行版（包名 `com.dsharnessmobile.shell`）。
+- **职责边界**：保留 `dsh-mobile-apk` 的安卓平台权能与桥，并增加 dsh-Remote 本地 gateway 与移动端 UI。前台服务、看门狗、WebView、SAF 桥、快照解压与更新、崩溃回退闸门（UndoGate）、ADB 授权原生写面（AdbState）、审计、内置控制台和日志仍由壳层负责；会话、实时消息、审批、工作区和文件页面来自 `gateway/`。
 - **运行时形态**：壳内嵌 Termux 运行时快照（`assets/snapshot.tar.xz` → `files/usr` + `files/home`）；引擎（Node.js `@deepseek-ai/dsh`，基线 0.1.1-rc.2）监听 `127.0.0.1:3080`；WebView 加载引擎 Web UI。
 - **构建链**：minSdk 26 / targetSdk 34 / compileSdk 36；Kotlin 2.0.21；AGP 8.8.2；Java 17。
 - **依赖**：androidx.activity-ktx / core-ktx、commons-compress、xz；Shizuku 零依赖反射（ShizukuSupport.kt，仅探活示例）。
 - **兄弟仓库**（协调仓库 `kelai141/dsh-mobile` 下的子目录）：`dsh-shell-termux`（Termux 执行器）、`dsh-client-ui-responsive`（移动 UI 注入层 + F5 消费端）、`dsh-host-web-compat`（页面注入/兼容）、`plugins/`（dsh-android-bridge / -manage / -linux-env / -file-open，协调仓库内）、`vendor/`（dshmarketplace-plugin、dsh-undo-savepoint 固化副本 + PATCHES.md）。
 - **上游** `deepseek-ai/deepseek-harness`（本地 checkout `dsh/`）：只读参考，**零改动**；一切适配以补丁层/插件/壳侧实现。
+- **本地集成层**：`gateway/` 是 dsh-Remote gateway、统计模块和前端资源的独立导入；Android 壳通过 `LocalGatewayManager` 将它部署到私有目录，固定监听 `127.0.0.1:8787`，并代理内嵌 DSH 的 `127.0.0.1:3080`。
 - **环境无关声明**：本文档适用于任意环境（Windows/WSL/Linux/macOS、有/无真机）开发维护者；环境差异点（WSL、ADB 真机、run-as）已在对应章节标注。
 
 ## 2. 构建与验证命令
@@ -102,6 +103,8 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | **EngineManager.kt** | 引擎总管：解压/指纹/环境/进程/补丁 | `shellEnv()`：PATH/LD_LIBRARY_PATH/HOME/DSH_HOME/TMPDIR/LD_PRELOAD(+termux-exec force)/TERMUX__PREFIX/SSL_CERT_FILE/DSH_ADB_*/DSH_ADB_FULLACCESS（=壳侧 fullAccess() 同源）/密钥注入；`refreshSnapshot` 指纹差异→备份→重解压→还原用户数据；`killExistingEngine`（destroyForcibly+pkill bin.js）；90s 冷却窗探活绕过 |
 | **EngineService.kt** | 前台服务 + 看门狗 | watchdog 5s 探活 + UndoGate 触发 + 唤醒锁续期/释放 + onTaskRemoved 清理（F5 生命礼仪） |
 | **MainActivity.kt** | 主界面/桥接线/意图处理 | `maybeProcessIncoming`（VIEW/SEND→FileIncoming→POST /api/android/file-incoming）；AndroidBridge 接线含 `onSetAdbPair={code,pairPort,connectPort->AdbState.pairWithCode}`；`onRevokeAdbPair`、`onAdbShell` |
+| **GatewayProbe.kt** | 本地 gateway 探活 | GET `http://127.0.0.1:8787/health?probe=live`，作为 WebView 显示和启动流程的第二个就绪条件 |
+| **LocalGatewayManager.kt** | 本地 gateway 部署与进程生命周期 | 从 Gradle asset source 部署 `gateway.js`、`gateway-stats.cjs`、`public/` 到 `filesDir/dsh-local-gateway/`；以嵌入式 Node 启动，固定 `HOST=127.0.0.1`、`PORT=8787`、`DSH_UPSTREAM=127.0.0.1:3080` |
 | **AndroidBridge.kt** | `window.androidBridge` 协议 v1 | `setAdbPair(code,pairPort,connectPort):Boolean`（**3 参**）、`getAdbState()`、`adbShell(cmd)`、`requestAllFilesAccess/hasAllFilesAccess`、`pickToken` 鉴权、`openNativePath`（FileProvider 白名单） |
 | **SnapshotExtractor.kt** | tar 解压（x-zip→filesDir、symlink、exec 属性戳印）+ **zip-slip 防护**（resolveEntry 拒绝 .. / 绝对路径 / 越界 symlink） | `extract()` |
 | **UpdateManager.kt** | 在线快照更新（第一版） | usr→usr-old 两步切换 + 指纹写 |
@@ -110,13 +113,14 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | **ConsoleActivity/ConsoleSession** | 内置终端 | 环境与引擎一致 |
 | **LogCollector.kt** | 调试日志收集 | 日文件轮转；审计另见 AdbAudit（files/audit/audit.ndjson） |
 
-`app/src/main/assets/`：`snapshot.tar.xz`、`snapshot.sha256`、`undo-emergency.mjs`（急救 CLI，UndoGate 用）、`licenses/`（LICENSES 标准文本 + THIRD_PARTY_NOTICES.md，GPL 合规 A2）、`console.html`。
+`app/src/main/assets/`：`snapshot.tar.xz`、`snapshot.sha256`、`undo-emergency.mjs`（急救 CLI，UndoGate 用）、`licenses/`（LICENSES 标准文本 + THIRD_PARTY_NOTICES.md，GPL 合规 A2）、`console.html`。Gradle 另外把根目录 `gateway/` 作为 asset source，包含本地 gateway、统计模块和 `public/`。
 
 ## 5. 桥与通道说明
 
 | 层 | 通道 | 语义 |
 |---|---|---|
 | 页面 → 壳 | `window.androidBridge` | ADB 授权变更**唯一**入口（setAdbAllow/setAdbPair/revokeAdbPair——被提权方不得自改授权，Shizuku 对照）；目录/图片 pick（token）；全文件访问；重启/控制台 |
+| App WebView → 本地 gateway | HTTP/WebSocket 127.0.0.1:8787 | dsh-Remote UI 的会话、实时消息、审批、统计、工作区和文件协议；首阶段保留本地 capability token，远程配对不启用 |
 | 壳 → 引擎 | HTTP 127.0.0.1:3080 | 文件直达 POST；pick 端点；**只读**状态端点（/api/android/privilege/status） |
 | 引擎 → 插件 | cordis 服务面 | androidPrivilege（状态机/execAdbShell/execAdbLine/gateFor 会话级 danger）；dsh-shell-termux 执行器 |
 | 插件 → 页面 | dsh.client 模块 + slots | ui-responsive（AppFrame/DevSection/settings.dev.item/F5 消费端轮询）；bridge client（AdbAuthSection 双端口配对 UI）；undo/marketplace 注册 |
@@ -174,3 +178,4 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | 2026-08-24 | 0.13.0 | **真机回归雷点补全（坑 18-23）**：debug 快照 ABI 事故、cordis.patch.yml 装配缺陷、EngineService 挂载缺失、通知链路三缺（事件桥/task-done 标记消费/服务挂载）、run-as 假错误、通知 debug 落盘 + 通用化增强（环境无关声明、构建前 ABI 核对提醒） | AI 开发助手 |
 | 2026-08-24 | 0.13.0 | 新增第 3 节「环境无关的开发/维护流程」（环境矩阵 5 组合 / 起步流程 6 步 / 改动流程规范与三必做 / 环境差异点速查 5 项），原第 3-7 节顺延为 4-8 | AI 开发助手 |
 | 2026-08-25 | 0.13.0 | 声明主分支为 `main`（修正「分支 docs/0.13.0-prd / feat/0.13.0」旧引用）+ 新增「禁用 emoji」约定（提交/PR/文档）并清除本文件存量 emoji | AI 开发助手 |
+| 2026-08-26 | 0.1.0-local | 从 dsh-mobile-apk 独立基线增加 dsh-Remote gateway/UI 本地集成层、GatewayProbe、LocalGatewayManager 和 127.0.0.1:8787 启动链 | AI 开发助手 |

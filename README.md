@@ -1,4 +1,4 @@
-# dsh-mobile-apk — DeepSeek Harness Android Shell APK
+# dsh-local-android — DeepSeek Harness Android Local Edition
 
 [🌐 中文说明 / 中文 README](README.zh.md)
 
@@ -6,17 +6,17 @@
 ![Android](https://img.shields.io/badge/Android-blue?style=flat&logo=Android&logoSize=auto&color=%2397CA00)
 
 
-> **dsh-mobile 生态** · [dsh-shell-termux](https://github.com/kelai141/dsh-shell-termux)（shell）· [dsh-client-ui-responsive](https://github.com/kelai141/dsh-client-ui-responsive)（移动 UI）· [dsh-host-web-compat](https://github.com/kelai141/dsh-host-web-compat)（浏览器兼容）
+> Independent local Android edition based on [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk), with the dsh-Remote gateway and mobile UI layered on top of the embedded DSH runtime.
 
 > ⚠️ **0.13.0-preview — preview release**: unstable, intended for community validation — do not rely on it in production.
 > - **ADB is not complete**: pairing / port auto-scan / execution are preview UI screens — the real ADB channel is under development and completes in the 0.13.0 official release.
 > - **Plugin-marketplace caveat**: the built-in marketplace covers many third-party plugins, and **most of them are likely unavailable or buggy on phones** (mobile vs desktop differ in WebView engine / filesystem / permission model / runtime). Mobile adaptation is long-term work — treat this beta as usability validation & feedback, not a production dependency. Report plugin issues to the [issue tracker](https://github.com/kelai141/dsh-mobile-apk/issues) with device model / version / reproduction steps.
 
-Android shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): WebView UI
-over an **embedded Termux runtime snapshot** (extract-and-run, no Termux app needed), SAF directory
-bridge, keep-alive foreground service, engine watchdog, and online runtime updates. One APK to
-install: it boots a full dsh web agent that can really execute bash. App name `DeepCode` (icon text
-DeepSearch), package `com.dsharnessmobile.shell`, version `0.13.0-preview` (versionCode 24).
+Android local edition for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): the
+WebView loads the dsh-Remote UI through a loopback gateway at `127.0.0.1:8787`, while the embedded
+DSH Web engine listens at `127.0.0.1:3080`. The Android shell retains the upstream runtime,
+SAF bridge, foreground service, watchdog and update foundations. See
+[docs/LOCAL_ARCHITECTURE.md](docs/LOCAL_ARCHITECTURE.md) for the integration boundary.
 
 ## Features
 
@@ -60,22 +60,15 @@ adb install -r -t <apk>    # same-signature overwrite install
 
 ## Build
 
-Snapshot build & packaging live in the coordination repo
-([dsh-mobile](https://github.com/kelai141/dsh-mobile)); this repo is the shell. Requirements:
-JDK 17+, Android SDK (compileSdk 36); Gradle 8.11.1 via wrapper.
+Requirements: JDK 17+, Android SDK with API 36, and the matching ABI runtime snapshot. The
+snapshot is intentionally not committed; download it from the upstream Release and verify it
+against `app/src/main/assets/snapshot.sha256`.
 
 ```powershell
-# Snapshot build (Termux sources + dependency closure + pnpm + cordis overrides + slimming):
-node scripts\build-snapshot-013.mjs <arm64|x86_64>
-
-# One-shot packaging (snapshot → injection → gates → gradle):
-pwsh scripts\build-apk-013.ps1 -Suffix "-preview"
-# output: out\v0.13.0\dsh-mobile-apk-v<ver>-<abi>.apk
+# Build with the locally downloaded snapshot:
+GRADLE_USER_HOME="$PWD/.gradle-home" ./gradlew assembleDebug
+# output: app/build/outputs/apk/debug/app-debug.apk
 ```
-
-Gates (inside `build-apk-013.ps1`): third-party compliance (`check-third-party.mjs`, GPL
-obligations) / secrets / ELF / cordis mount-set ⊇ injected set / LICENSES self-check (Python
-streaming) — any failure rejects the build.
 
 ## Bridge protocol v1 (`window.androidBridge`)
 

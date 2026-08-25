@@ -67,6 +67,7 @@ class EngineService : Service() {
     watchdog = null
     try { engineManager.stopEngine() } catch (_: Exception) {
     }
+    LocalGatewayManager.stop()
   }
 
   /**
@@ -78,6 +79,9 @@ class EngineService : Service() {
    */
   private fun ensureEngine() {
     if (!engineManager.engineReady) return
+    // The local gateway is a sibling process of the embedded DSH web engine.
+    // It can reconnect its upstream collectors after an engine restart.
+    LocalGatewayManager.ensureRunning(this, engineManager)
     if (watchdog == null) {
       WatchdogV2.acquireWakeLock(this)
       watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->

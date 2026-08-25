@@ -7,6 +7,10 @@ android {
   namespace = "com.dsharnessmobile.shell"
   compileSdk = 36
 
+  // dsh-Remote gateway and UI are packaged as app assets and deployed to the
+  // private files directory before the local gateway starts.
+  sourceSets["main"].assets.srcDir(rootProject.file("gateway"))
+
   defaultConfig {
     applicationId = "com.dsharnessmobile.shell"
     minSdk = 26

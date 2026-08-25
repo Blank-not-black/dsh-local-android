@@ -44,7 +44,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.ceil
 
-/** Shell activity: WebView over the local dsh engine + engine guide fallback. */
+/** Shell activity: WebView over the local dsh-Remote gateway + engine guide fallback. */
 class MainActivity : ComponentActivity() {
 
   private lateinit var webView: WebView
@@ -85,7 +85,10 @@ class MainActivity : ComponentActivity() {
     override fun run() {
       val monitor = this
       Thread {
-        val running = try { EngineProbe.check(500).optBoolean("running", false) } catch (_: Exception) { false }
+        val running = try {
+          EngineProbe.check(500).optBoolean("running", false) &&
+            GatewayProbe.check(500).optBoolean("running", false)
+        } catch (_: Exception) { false }
         runOnUiThread {
           if (::webView.isInitialized && ::guideView.isInitialized && !userClosedEngine) {
             if (!running && webView.visibility == View.VISIBLE) {
@@ -791,7 +794,13 @@ class MainActivity : ComponentActivity() {
       ),
       "androidBridge",
     )
-    webView.loadUrl(EngineProbe.ENGINE_URL)
+    webView.loadUrl(localGatewayPageUrl())
+  }
+
+  private fun localGatewayPageUrl(): String {
+    val token = LocalGatewayManager.accessToken(this)
+    val suffix = if (token.isEmpty()) "" else "?token=" + Uri.encode(token) + "&local=1"
+    return GatewayProbe.GATEWAY_URL + "/" + suffix
   }
 
   /**
@@ -1173,7 +1182,7 @@ class MainActivity : ComponentActivity() {
    */
   private fun isEngineSource(url: String): Boolean {
     return try {
-      val base = Uri.parse(EngineProbe.ENGINE_URL)
+      val base = Uri.parse(GatewayProbe.GATEWAY_URL)
       val uri = Uri.parse(url)
       uri.scheme == base.scheme && uri.host == base.host && uri.port == base.port
     } catch (_: Exception) {
@@ -1444,6 +1453,7 @@ class MainActivity : ComponentActivity() {
     }
     try { engineManager.stopEngine() } catch (_: Exception) {
     }
+    LocalGatewayManager.stop()
     try { stopService(Intent(this, EngineService::class.java)) } catch (_: Exception) {
     }
     LogCollector.log("dsh-shell", "harness closed via dev options (shutdownToGuide)")
@@ -1506,7 +1516,10 @@ class MainActivity : ComponentActivity() {
     Thread {
       try {
       if (!isCurrentEngineFlow(generation)) return@Thread
-      if (EngineProbe.check().optBoolean("running", false)) {
+      if (EngineProbe.check().optBoolean("running", false) &&
+        LocalGatewayManager.ensureRunning(this, engineManager) &&
+        GatewayProbe.check().optBoolean("running", false)
+      ) {
         runOnUiThread { if (isCurrentEngineFlow(generation)) showWeb() }
         return@Thread
       }
@@ -1566,6 +1579,9 @@ class MainActivity : ComponentActivity() {
       for (i in 0..30) {
         if (!isCurrentEngineFlow(generation)) return@Thread
         if (EngineProbe.check().optBoolean("running", false)) {
+          LocalGatewayManager.ensureRunning(this, engineManager)
+        }
+        if (GatewayProbe.check().optBoolean("running", false)) {
           startEngineService()
           applyShizukuKeepAlive()
           runOnUiThread { if (isCurrentEngineFlow(generation)) showWeb() }
@@ -1575,7 +1591,7 @@ class MainActivity : ComponentActivity() {
           val waited = i
           runOnUiThread {
             if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-            applyGuidePhase(GuidePhase.Starting, "正在等待 Web 服务…", "引擎进程已拉起，正在探测 127.0.0.1:3080（${waited}s）。")
+            applyGuidePhase(GuidePhase.Starting, "正在等待本地服务…", "引擎已拉起，正在等待 gateway 127.0.0.1:8787（${waited}s）。")
           }
         }
         Thread.sleep(1000)
@@ -1639,9 +1655,9 @@ class MainActivity : ComponentActivity() {
   private fun showWeb() {
     guideView.visibility = View.GONE
     webView.visibility = View.VISIBLE
-    // The WebView may have rendered an error page before the engine was
-    // ready (engine boot takes seconds); reload now that it answers.
-    webView.reload()
+    // The local gateway may have created a fresh capability token while the
+    // engine was booting; load the trusted origin with the current token.
+    webView.loadUrl(localGatewayPageUrl())
   }
 
   /** 进入测试界面（引擎失败/未就绪回退）：状态 + 崩溃横幅 + engine.log 摘要。 */

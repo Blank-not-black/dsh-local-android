@@ -12,5 +12,5 @@ dependencyResolutionManagement {
     mavenCentral()
   }
 }
-rootProject.name = "dsh-mobile-apk"
+rootProject.name = "dsh-local-android"
 include(":app")

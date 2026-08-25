@@ -1,19 +1,19 @@
-# dsh-mobile-apk — DeepSeek Harness 安卓壳 APK
+# dsh-local-android — DeepSeek Harness 安卓本地版
 
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-blue?style=flat&logo=DeepSeek&logoSize=auto&color=%232D5F9E)
 ![Android](https://img.shields.io/badge/Android-blue?style=flat&logo=Android&logoSize=auto&color=%2397CA00)
 
 
-> **dsh-mobile 生态** · [dsh-shell-termux](https://github.com/kelai141/dsh-shell-termux)（shell）· [dsh-client-ui-responsive](https://github.com/kelai141/dsh-client-ui-responsive)（移动 UI）· [dsh-host-web-compat](https://github.com/kelai141/dsh-host-web-compat)（浏览器兼容）· [dsh-mobile](https://github.com/kelai141/dsh-mobile)（协调仓库，private）
+> 独立的 Android 本地版：基于 [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk) 的运行时和 Android 壳，叠加 dsh-Remote gateway 与移动端 UI。
 
 > ⚠️ **这是预览版（0.13.0-preview）**：不稳定，用于社区验证与反馈，不建议当作生产依赖。
 > - **ADB 未完成**：配对 / 端口自动扫描 / 执行为预览界面——真实 ADB 通道开发中，0.13.0 正式版完成。
 > - **插件市场适配警示**：内置市场牵涉大量第三方插件，**绝大多数插件在手机端不一定可用、大概率有 bug**（移动端与桌面端在 WebView 内核/文件系统/权限模型/运行环境差异大）；移动端适配是长期工程，beta 阶段以「可用性验证与反馈」为主，暂不建议当作生产依赖。插件报错请到 [issues](https://github.com/kelai141/dsh-mobile-apk/issues) 反馈（附机型/版本/复现步骤）。
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的安卓壳：WebView UI 覆盖
-**内嵌 Termux 运行时快照**（解压即跑，无需 Termux app）、SAF 目录桥、保活前台服务、引擎看门狗、
-运行时在线更新。一个 APK 装完即用：完整的 dsh web agent，且能真实执行 bash。应用名 `DeepCode`
-（图标文字 DeepSearch）、包名 `com.dsharnessmobile.shell`、版本 `0.13.0-preview`（versionCode 24）。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Android 本地版：WebView 加载
+dsh-Remote UI，通过 `127.0.0.1:8787` 的本地 gateway 代理内嵌 DSH Web（`127.0.0.1:3080`）。
+Android 壳继续复用上游运行时、SAF 目录桥、保活前台服务、看门狗和更新基础。整体边界见
+[docs/LOCAL_ARCHITECTURE.md](docs/LOCAL_ARCHITECTURE.md)。
 
 ## 功能
 
@@ -52,16 +52,13 @@ adb install -r -t <apk>    # 同签名覆盖安装
 
 ## 构建
 
-快照构建与打包在**协调仓库**（[dsh-mobile](https://github.com/kelai141/dsh-mobile)）完成，
-本仓库是壳子仓库。要求：JDK 17+、Android SDK（compileSdk 36）；Gradle 8.11.1 由 wrapper 提供。
+要求：JDK 17+、包含 API 36 的 Android SDK，以及与目标设备 ABI 匹配的运行时快照。快照不提交进
+Git，需要从上游 Release 下载，并与 `app/src/main/assets/snapshot.sha256` 校验。
 
 ```powershell
-# 快照构建（Termux 源 + 依赖闭包 + pnpm + cordis 权威覆盖 + 瘦身）：
-node scripts\build-snapshot-013.mjs <arm64|x86_64>
-
-# 一键打包（快照 → 注入 → 门禁 → gradle）：
-pwsh scripts\build-apk-013.ps1 -Suffix "-preview"
-# 产物: out\v0.13.0\dsh-mobile-apk-v<ver>-<abi>.apk
+# 使用本地已下载并校验的快照构建：
+GRADLE_USER_HOME="$PWD/.gradle-home" ./gradlew assembleDebug
+# 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
 门禁（`build-apk-013.ps1` 内）：第三方合规（`check-third-party.mjs`，GPL 义务）/ 🔒机密 /
