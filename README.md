@@ -75,7 +75,7 @@ GRADLE_USER_HOME="$PWD/.gradle-home" ./gradlew assembleDebug
 
 ## Bridge protocol v1 (`window.androidBridge`)
 
-App name `DeepCode` (icon text DeepSearch), package `com.dsharnessmobile.shell`.
+App name `DSH for Android`, package `com.dsharnessmobile.shell`.
 `androidBridge.version` returns the app version (currently `0.13.0-preview`, versionCode 24);
 pages feature-detect on it. The ADB methods below are the preview authorization surface — the real
 channel completes in the 0.13.0 official release.

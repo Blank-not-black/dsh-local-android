@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
   private val pickToken: String = EngineManager.ensurePickToken()
   private lateinit var engineStatus: TextView
   private lateinit var progressText: TextView
-  /** 启动/测试双态界面（v0.11.0）：解压进度条、崩溃横幅、engine.log 摘要。 */
+  /** 启动/测试双态界面：解压进度条、崩溃横幅和分层后端日志摘要。 */
   private lateinit var progressBar: ProgressBar
   private lateinit var crashBanner: TextView
   private lateinit var logSummary: TextView
@@ -92,9 +92,11 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
           if (::webView.isInitialized && ::guideView.isInitialized && !userClosedEngine) {
             if (!running && webView.visibility == View.VISIBLE) {
+              backendReady = false
               applyGuidePhase(GuidePhase.Recovering, "引擎未运行，正在自动恢复…")
               showGuide()
             } else if (running && guideView.visibility == View.VISIBLE) {
+              backendReady = true
               showWeb()
             }
           }
@@ -158,6 +160,16 @@ class MainActivity : ComponentActivity() {
   }
 
   private val engineManager by lazy { EngineManager(this, pickToken) }
+  private val backendController by lazy {
+    BackendSupervisor(
+      install = AndroidInstallBackend(engineManager),
+      engine = AndroidEngineBackend(engineManager),
+      gateway = AndroidGatewayBackend(this, engineManager),
+    )
+  }
+  private var backendUiEndpoint = ""
+  @Volatile
+  private var backendReady = false
   private val engineFlowRunning = java.util.concurrent.atomic.AtomicBoolean(false)
   /** Invalidates stale startup work when the user closes or explicitly restarts the engine. */
   private val engineFlowGeneration = java.util.concurrent.atomic.AtomicLong(0)
@@ -520,18 +532,16 @@ class MainActivity : ComponentActivity() {
       engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
       engineMonitorHandler.post(engineMonitorRunnable)
     }
-    // 2026-08-24 修复（真机实锤：通知链路不消费的根因）：startEngineService（foreground service
-    // + WatchdogV2 tick）此前只在 startEngineFlow 首次轮询成功时挂载——**引擎先跑、app 后启动
-    // （后台恢复/热启动）时服务从未启动 → watchdog 缺失 → 通知消费（task-done 标记）/自动回退
-    // /唤醒锁全链路失效**。onResume 幂等确保服务启动（已在跑则 no-op）。
-    if (!userClosedEngine) {
+    // 只在四层协调器完成 Engine -> Gateway handoff 后挂载后台服务。
+    // 启动前不提前拉起 EngineService，避免绕过安装检测并与 BackendSupervisor 竞争启动。
+    if (!userClosedEngine && backendReady) {
       startEngineService()
     }
     // Back from the directory picker / Termux: re-route if the engine came up.
     // 仅当 WebView 未展示（引导页/首次启动）时才探测并重路由；相册/文件选择器
     // 返回时 WebView 已可见，探测超时会误触发 showWeb→reload，导致 JS 状态丢失。
     if (::chrome.isInitialized) refreshGuideMeta()
-    if (!userClosedEngine && webView.visibility != View.VISIBLE && !EngineProbe.check().optBoolean("running", false)) startEngineFlow()
+    if (!userClosedEngine && webView.visibility != View.VISIBLE && !backendReady) startEngineFlow()
     // 主题补推：从系统设置/SAF 返回时系统主题可能已变（兜底桥时序覆盖）。
     if (::webView.isInitialized) {
       pushSystemDark(webView)
@@ -798,9 +808,7 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun localGatewayPageUrl(): String {
-    val token = LocalGatewayManager.accessToken(this)
-    val suffix = if (token.isEmpty()) "" else "?token=" + Uri.encode(token) + "&local=1"
-    return GatewayProbe.GATEWAY_URL + "/" + suffix
+    return backendUiEndpoint.ifBlank { GatewayProbe.GATEWAY_URL + "/?local=1" }
   }
 
   /**
@@ -1096,6 +1104,10 @@ class MainActivity : ComponentActivity() {
     sb.append("android: ").append(android.os.Build.VERSION.RELEASE).append(" / SDK ").append(android.os.Build.VERSION.SDK_INT).append('\n')
     sb.append("device: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL).append('\n')
     sb.append("engine: ").append(EngineProbe.check().toString()).append('\n')
+    sb.append("gateway: ").append(GatewayProbe.check().toString()).append('\n')
+    sb.append("ui: ").append(GatewayProbe.GATEWAY_URL).append(" (local loopback)\n")
+    sb.append("engine.log: ").append(File(filesDir, "engine.log").absolutePath).append('\n')
+    sb.append("gateway.log: ").append(LocalGatewayManager.logFile(this).absolutePath).append('\n')
     sb.append("dshdata: ").append(engineManager.dshDataDir.absolutePath)
       .append(" (nomedia=").append(File(engineManager.dshDataDir, ".nomedia").exists())
       .append(", private-layout=").append(File(File(engineManager.homeDir, ".dsh"), ".private-layout").exists())
@@ -1369,7 +1381,7 @@ class MainActivity : ComponentActivity() {
     GuidePhase.Undoing -> "正在把配置/插件回滚到最后良好快照（自动回撤）。"
     GuidePhase.Error -> "可打开控制台查看 engine.log，或点击重试。"
     GuidePhase.Closed -> "引擎已停止，不会自动恢复。"
-    GuidePhase.Idle -> "引擎就绪后将进入 DeepCode。"
+    GuidePhase.Idle -> "引擎就绪后将进入 DSH for Android。"
   }
 
   private fun setStatusPulse(on: Boolean) {
@@ -1440,6 +1452,7 @@ class MainActivity : ComponentActivity() {
   /** 开发者选项「关闭」：停止引擎并回退到初始化（启动/测试）界面，不自动重启。 */
   private fun shutdownToGuide() {
     userClosedEngine = true
+    backendReady = false
     engineFlowGeneration.incrementAndGet()
     EngineService.userShutdown = true
     engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
@@ -1453,7 +1466,7 @@ class MainActivity : ComponentActivity() {
     }
     try { engineManager.stopEngine() } catch (_: Exception) {
     }
-    LocalGatewayManager.stop()
+    backendController.stopGateway()
     try { stopService(Intent(this, EngineService::class.java)) } catch (_: Exception) {
     }
     LogCollector.log("dsh-shell", "harness closed via dev options (shutdownToGuide)")
@@ -1503,6 +1516,35 @@ class MainActivity : ComponentActivity() {
     maybeAutoUndo(generation)
   }
 
+  private fun backendSupervisor(): BackendSupervisor {
+    return backendController
+  }
+
+  private fun handleBackendEvent(generation: Long, event: BackendEvent) {
+    if (!isCurrentEngineFlow(generation)) return
+    when (event) {
+      is BackendEvent.Started -> when (event.stage) {
+        BackendStage.INSTALL -> applyGuidePhase(GuidePhase.Extracting, "正在检查本地运行时")
+        BackendStage.ENGINE -> applyGuidePhase(GuidePhase.Starting, "正在启动 DSH 后台")
+        BackendStage.GATEWAY -> applyGuidePhase(
+          GuidePhase.Starting,
+          "正在启动本地 Gateway",
+          "DSH 后台已就绪，正在建立本地 UI 通道。",
+        )
+        BackendStage.UI -> Unit
+      }
+      is BackendEvent.InstallProgress -> {
+        val mb = event.bytesDone / 1024 / 1024
+        progressText.visibility = View.VISIBLE
+        progressText.text = "已写入 " + mb + " MB"
+      }
+      is BackendEvent.Ready -> when (event.stage) {
+        BackendStage.INSTALL -> progressText.visibility = View.GONE
+        BackendStage.ENGINE, BackendStage.GATEWAY, BackendStage.UI -> Unit
+      }
+    }
+  }
+
   private fun startEngineFlow() {
     // onCreate and the following onResume can both request startup. Acquire the
     // flow before mutating lifecycle state so a duplicate cannot invalidate the
@@ -1515,92 +1557,34 @@ class MainActivity : ComponentActivity() {
     engineMonitorHandler.post(engineMonitorRunnable)
     Thread {
       try {
-      if (!isCurrentEngineFlow(generation)) return@Thread
-      if (EngineProbe.check().optBoolean("running", false) &&
-        LocalGatewayManager.ensureRunning(this, engineManager) &&
-        GatewayProbe.check().optBoolean("running", false)
-      ) {
-        runOnUiThread { if (isCurrentEngineFlow(generation)) showWeb() }
-        return@Thread
-      }
-      if (!isCurrentEngineFlow(generation)) return@Thread
-      // 启动即有反馈：进入测试界面显示"正在启动引擎…"（不再白屏等 probe）。
-      runOnUiThread {
-        if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-        applyGuidePhase(GuidePhase.Starting, "正在启动引擎…")
-        showGuide()
-      }
-      if (!engineManager.snapshotFresh()) {
         if (!isCurrentEngineFlow(generation)) return@Thread
         runOnUiThread {
           if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-          applyGuidePhase(GuidePhase.Extracting, "正在解压运行时")
-          progressText.visibility = View.VISIBLE
-          progressText.text = "准备写入内嵌环境…"
+          applyGuidePhase(GuidePhase.Starting, "正在准备 DSH for Android")
+          showGuide()
         }
-        val ok = engineManager.refreshSnapshot { done, _ ->
-          runOnUiThread {
-            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-            // done 是解压后字节数，total 是压缩包字节数，口径不一致；只显示已解压量。
-            val mb = done / 1024 / 1024
-            progressText.visibility = View.VISIBLE
-            progressText.text = "已写入 " + mb + " MB"
-            if (lastGuidePhase != GuidePhase.Extracting) {
-              applyGuidePhase(GuidePhase.Extracting, "正在解压运行时")
+        val result = backendSupervisor().start { event ->
+          runOnUiThread { handleBackendEvent(generation, event) }
+        }
+        if (!isCurrentEngineFlow(generation)) return@Thread
+        when (result) {
+          is BackendResult.Ready -> {
+            backendUiEndpoint = result.uiEndpoint
+            backendReady = true
+            startEngineService()
+            applyShizukuKeepAlive()
+            runOnUiThread { if (isCurrentEngineFlow(generation)) showWeb() }
+          }
+          is BackendResult.Failed -> {
+            backendReady = false
+            runOnUiThread {
+              if (!isCurrentEngineFlow(generation)) return@runOnUiThread
+              applyGuidePhase(GuidePhase.Error, result.reason)
+              showGuide()
             }
+            if (result.stage == BackendStage.ENGINE) onEngineStartTimeout(generation)
           }
         }
-        if (!ok) {
-          runOnUiThread {
-            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-            applyGuidePhase(GuidePhase.Error, "运行时更新失败")
-            showGuide()
-          }
-          return@Thread
-        }
-        runOnUiThread {
-          if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-          applyGuidePhase(GuidePhase.Starting, "正在启动引擎…")
-        }
-      }
-      if (!isCurrentEngineFlow(generation)) return@Thread
-      // 急救 CLI 随 App 版本部署（内容比对幂等）：下探失败时自动回撤的前置依赖。
-      engineManager.deployUndoCli()
-      if (!engineManager.startEngine()) {
-        runOnUiThread {
-          if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-          applyGuidePhase(GuidePhase.Error, "引擎启动失败")
-          showGuide()
-        }
-        maybeAutoUndo(generation)
-        return@Thread
-      }
-      // Poll up to 30s for the web service.
-      for (i in 0..30) {
-        if (!isCurrentEngineFlow(generation)) return@Thread
-        if (EngineProbe.check().optBoolean("running", false)) {
-          LocalGatewayManager.ensureRunning(this, engineManager)
-        }
-        if (GatewayProbe.check().optBoolean("running", false)) {
-          startEngineService()
-          applyShizukuKeepAlive()
-          runOnUiThread { if (isCurrentEngineFlow(generation)) showWeb() }
-          return@Thread
-        }
-        if (i == 8 || i == 16) {
-          val waited = i
-          runOnUiThread {
-            if (!isCurrentEngineFlow(generation)) return@runOnUiThread
-            applyGuidePhase(GuidePhase.Starting, "正在等待本地服务…", "引擎已拉起，正在等待 gateway 127.0.0.1:8787（${waited}s）。")
-          }
-        }
-        Thread.sleep(1000)
-      }
-      if (isCurrentEngineFlow(generation)) runOnUiThread {
-          applyGuidePhase(GuidePhase.Error, "引擎启动超时")
-          showGuide()
-        }
-      onEngineStartTimeout(generation)
       } finally {
         engineFlowRunning.set(false)
       }
@@ -1673,7 +1657,7 @@ class MainActivity : ComponentActivity() {
     } else {
       crashBanner.visibility = View.GONE
     }
-    val tail = tailEngineLog(8)
+    val tail = tailBackendLogs(10)
     if (tail.isNotEmpty()) {
       logSummary.text = tail
       chrome.logSection.visibility = View.VISIBLE
@@ -1692,15 +1676,21 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** engine.log 尾部摘要（测试界面诊断用；缺失/不可读返回空）。 */
-  private fun tailEngineLog(lines: Int): String {
-    val f = File(filesDir, "engine.log")
-    if (!f.exists()) return ""
-    return try {
-      f.readLines().takeLast(lines).joinToString("\n")
-    } catch (_: Exception) {
-      ""
+  /** DSH engine and local gateway tails, with source labels kept in the UI. */
+  private fun tailBackendLogs(lines: Int): String {
+    fun tail(label: String, file: File): String {
+      if (!file.exists()) return ""
+      return try {
+        val text = file.readLines().takeLast(lines).joinToString("\n")
+        if (text.isBlank()) "" else "[$label]\n$text"
+      } catch (_: Exception) {
+        ""
+      }
     }
+    return listOf(
+      tail("dsh-engine", File(filesDir, "engine.log")),
+      tail("local-gateway", LocalGatewayManager.logFile(this)),
+    ).filter(String::isNotBlank).joinToString("\n")
   }
 
   /** 进程级崩溃标记：记录未捕获异常摘要，交回默认 handler（不吞异常）。 */
@@ -1726,6 +1716,7 @@ class MainActivity : ComponentActivity() {
   private fun restartEngine() {
     if (!engineRestarting.compareAndSet(false, true)) return
     userClosedEngine = false
+    backendReady = false
     engineFlowGeneration.incrementAndGet()
     EngineService.userShutdown = false
     Thread {

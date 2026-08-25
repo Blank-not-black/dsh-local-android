@@ -103,6 +103,7 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | **EngineManager.kt** | 引擎总管：解压/指纹/环境/进程/补丁 | `shellEnv()`：PATH/LD_LIBRARY_PATH/HOME/DSH_HOME/TMPDIR/LD_PRELOAD(+termux-exec force)/TERMUX__PREFIX/SSL_CERT_FILE/DSH_ADB_*/DSH_ADB_FULLACCESS（=壳侧 fullAccess() 同源）/密钥注入；`refreshSnapshot` 指纹差异→备份→重解压→还原用户数据；`killExistingEngine`（destroyForcibly+pkill bin.js）；90s 冷却窗探活绕过 |
 | **EngineService.kt** | 前台服务 + 看门狗 | watchdog 5s 探活 + UndoGate 触发 + 唤醒锁续期/释放 + onTaskRemoved 清理（F5 生命礼仪） |
 | **MainActivity.kt** | 主界面/桥接线/意图处理 | `maybeProcessIncoming`（VIEW/SEND→FileIncoming→POST /api/android/file-incoming）；AndroidBridge 接线含 `onSetAdbPair={code,pairPort,connectPort->AdbState.pairWithCode}`；`onRevokeAdbPair`、`onAdbShell` |
+| **BackendSupervisor.kt** | 四层启动协调 | 只按 INSTALL → ENGINE → GATEWAY → UI 顺序推进；通过 `InstallBackend`、`EngineBackend`、`GatewayBackend` 契约归因失败，不渲染 UI、不直接读取控件 |
 | **GatewayProbe.kt** | 本地 gateway 探活 | GET `http://127.0.0.1:8787/health?probe=live`，作为 WebView 显示和启动流程的第二个就绪条件 |
 | **LocalGatewayManager.kt** | 本地 gateway 部署与进程生命周期 | 从 Gradle asset source 部署 `gateway.js`、`gateway-stats.cjs`、`public/` 到 `filesDir/dsh-local-gateway/`；以嵌入式 Node 启动，固定 `HOST=127.0.0.1`、`PORT=8787`、`DSH_UPSTREAM=127.0.0.1:3080` |
 | **AndroidBridge.kt** | `window.androidBridge` 协议 v1 | `setAdbPair(code,pairPort,connectPort):Boolean`（**3 参**）、`getAdbState()`、`adbShell(cmd)`、`requestAllFilesAccess/hasAllFilesAccess`、`pickToken` 鉴权、`openNativePath`（FileProvider 白名单） |
@@ -114,6 +115,7 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | **LogCollector.kt** | 调试日志收集 | 日文件轮转；审计另见 AdbAudit（files/audit/audit.ndjson） |
 
 `app/src/main/assets/`：`snapshot.tar.xz`、`snapshot.sha256`、`undo-emergency.mjs`（急救 CLI，UndoGate 用）、`licenses/`（LICENSES 标准文本 + THIRD_PARTY_NOTICES.md，GPL 合规 A2）、`console.html`。Gradle 另外把根目录 `gateway/` 作为 asset source，包含本地 gateway、统计模块和 `public/`。
+`engine.log` 只记录 DSH Engine，`dsh-local-gateway/gateway.log` 只记录 Local Gateway；启动页和调试导出会保留两个来源标签。
 
 ## 5. 桥与通道说明
 
@@ -148,8 +150,8 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 17. **错位目录（issue #80 P5）**：relocate-snapshot 曾把包内绝对路径 `/data/data/com.termux` 当相对路径搬进 usr 树（`usr/data/data/...`）——纯冗余；构建链 7e 无条件删除 `usr/data`。
 18. **ABI 快照必须匹配设备（2026-08-24 本日重大事故）**：曾因 debug APK 默认使用 x86_64 快照，装到 arm64 真机后引擎崩溃：`error: "/data/data/.../usr/bin/node" is for EM_X86_64 (62) instead of EM_AARCH64 (183)`。核对方法：解快照 tar 读 `usr/bin/node` 的 ELF e_machine（62=x86_64，183=arm64），或 `aapt dump badging <apk>` 看 native-code。当前仓库开发 pin 为 arm64；切换 ABI 时须**同时替换** `assets/snapshot.tar.xz` + `snapshot.sha256`（指纹变→refreshSnapshot 全量重解压 2-4 分钟，勿中断）。
 19. **cordis.patch.yml 装配缺陷**：基座 cordis.patch.yml 只含 shell-termux/host-web-compat/ui-responsive——0.13.0 新增的 android-bridge/android-manage/android-linux-env/android-file-open/undo-savepoint/marketplace **从不进入快照装配** → 引擎不加载这些插件（`/api/android/file-incoming` 404、ADB 设置项缺失、通知事件桥无宿主）。修复：build-snapshot-013.mjs 7b2 用 `scripts/profile-web.cordis.patch.yml` **权威覆盖**快照内同名文件（缺失即 `process.exit` 拒发）。**注意**：真机热改 cordis.patch.yml 后必须**冷启动 app**（`am force-stop` + start）才重装配——watchdog 热重启引擎不重读 profile（只重跑 node）。
-20. **EngineService 挂载缺失**：startEngineService 只在 startEngineFlow 首次轮询成功时调用——**引擎先跑、app 后启动（热启动/恢复）时服务从未启动 → watchdog 缺失 → 通知消费（task-done 标记）/自动回退/唤醒锁全链路失效**。修复：MainActivity `onResume` 幂等 `startEngineService()`。
-21. **通知链路三缺（2026-08-24 用户实测「任务完成没通知」根因）**：① 引擎事件桥缺失（前端 showNotification 桥无调用方，F0.3 部分实现=以前未做）——补：dsh-android-bridge 监听 `ctx.on('session/event')` 捕获 `assistant/message` → 写 `files/home/.dsh/.task-done.ndjson` 标记；② WatchdogV2.consumeTaskDoneMarkers 消费标记 → `NotifyCenter.notify`（deepProbe 成功路径顺带；JSON 解析失败会丢通知——务必确保标记是 `JSON.stringify` 合法 JSON）；③ EngineService 必须挂载（见坑 20）。验证：`files/notify-debug.log` 落盘每步（诊断时开）；通知 id=`("dsh-"+category).hashCode() and 0x7fffffff` 稳定正数。
+20. **EngineService 启动边界**：EngineService 只能在 `BackendSupervisor` 完成安装、Engine、Gateway 和 UI handoff 后启动；`onResume` 只在本地 backend 状态已确认就绪时补挂载，避免绕过安装检测或与协调器竞争。
+21. **通知链路三缺（2026-08-24 用户实测「任务完成没通知」根因）**：① 引擎事件桥缺失（前端 showNotification 桥无调用方，F0.3 部分实现=以前未做）——补：dsh-android-bridge 监听 `ctx.on('session/event')` 捕获 `assistant/message` → 写 `files/home/.dsh/.task-done.ndjson` 标记；② WatchdogV2.consumeTaskDoneMarkers 消费标记 → `NotifyCenter.notify`（deepProbe 成功路径顺带；JSON 解析失败会丢通知——务必确保标记是 `JSON.stringify` 合法 JSON）；③ EngineService 必须在 BackendSupervisor handoff 后挂载（见坑 20）。验证：`files/notify-debug.log` 落盘每步（诊断时开）；通知 id=`("dsh-"+category).hashCode() and 0x7fffffff` 稳定正数。
 22. **免 hooks 环境 ELF 不可执行**：`adb shell run-as ... /usr/bin/<bin> | head` 会报 `not executable: 64-bit ELF file` / `CANNOT LINK ... library libandroid-support.so not found`——因为 run-as 裸环境无 termux-exec LD_PRELOAD 钩子与 LD_LIBRARY_PATH。**验证快照内二进制必须带全套引擎 env**（`LD_PRELOAD=libtermux-exec-ld-preload.so` + `TERMUX_EXEC__*` + `LD_LIBRARY_PATH` + `OPENSSL_CONF`）。这是「run-as 测出假错误」的常见来源（如 node/npm/adb）。
 23. **通知 debug 落盘**：WatchdogV2.consumeTaskDoneMarkers 写了 `files/notify-debug.log`（诊断用，**保留**——是排查通知链路的关键工具）。
 
@@ -180,3 +182,5 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | 2026-08-25 | 0.13.0 | 声明主分支为 `main`（修正「分支 docs/0.13.0-prd / feat/0.13.0」旧引用）+ 新增「禁用 emoji」约定（提交/PR/文档）并清除本文件存量 emoji | AI 开发助手 |
 | 2026-08-26 | 0.1.0-local | 从 dsh-mobile-apk 独立基线增加 dsh-Remote gateway/UI 本地集成层、GatewayProbe、LocalGatewayManager 和 127.0.0.1:8787 启动链 | AI 开发助手 |
 | 2026-08-26 | 0.1.0-local | 将开发快照 pin 修正为 arm64，并完成实体手机 Debug APK 构建与 KDE Connect 发送验证 | AI 开发助手 |
+| 2026-08-26 | 0.1.1-local | 引入 BackendSupervisor 四层启动契约，移除 EngineService 对 Gateway 的直接管理，并增加分层日志摘要和四阶段测试 | AI 开发助手 |
+| 2026-08-26 | 0.1.1-local | 移除未经过协调器的开机直启入口，统一由 DSH for Android 前台启动流程进入四层 handoff | AI 开发助手 |

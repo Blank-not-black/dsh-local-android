@@ -4,18 +4,41 @@
 
 本仓库是一个独立的 Android 本地 DSH 发行版：复用 `dsh-mobile-apk` 的 Android 运行时底座，同时使用 dsh-Remote 的 gateway 和移动端 UI。dsh-Remote 主线继续负责远程控制电脑上的 DSH，本仓库不把本地运行时实验反向混入主线。
 
-## 第一阶段链路
+## 四层链路
 
 ```text
-Android EngineService
-  └─ embedded Node + DSH Web (127.0.0.1:3080)
-       └─ local gateway (127.0.0.1:8787)
-            └─ dsh-Remote UI (WebView)
+Install / detection screen
+  └─ BackendSupervisor
+       ├─ DSH Engine (127.0.0.1:3080)
+       ├─ Local Gateway (127.0.0.1:8787)
+       └─ UI handoff (WebView)
 ```
+
+四层之间只通过明确的阶段契约传递状态。安装层不启动网络服务，Engine 层不管理 Gateway，Gateway 层不渲染 UI，UI 层不直接启动 DSH 进程。`BackendSupervisor` 只负责顺序、就绪等待和失败归因。
 
 第一阶段保留 HTTP/WebSocket 作为 WebView 与 gateway 的进程间通信方式。它们只在 Android 回环接口上传输，不承担远程访问职责，因此可以移除远程连接相关的复杂度，而不必立即重写前端协议。
 
 ## 模块边界
+
+### 1. 安装 / 检测层
+
+负责快照完整性、ABI 对应、数据迁移、运行时解压、权限和首启状态。对应
+`AndroidInstallBackend`。失败只归因到安装层，不启动 DSH 或 Gateway。
+
+### 2. DSH 后台运行层
+
+负责 `dsh web --port 3080 --no-open`、EngineService、看门狗、回滚和 `engine.log`。
+它不启动 Gateway，也不决定 WebView 页面。
+
+### 3. Local Gateway 层
+
+负责把 DSH API/WS 代理到本地 `127.0.0.1:8787`、本地文件接口、鉴权和 `gateway.log`。
+它只在 DSH Engine 就绪后由 `BackendSupervisor` 启动。
+
+### 4. DSH for Android UI 层
+
+负责启动成功后的 WebView 页面和用户交互。只有 Gateway 就绪后才接管页面；任何前置阶段失败
+都停留在安装/检测界面，并显示对应层的诊断。
 
 ### Android 底座
 
@@ -48,12 +71,13 @@ Android EngineService
 ## 里程碑
 
 1. **仓库基线**：上游 Android 壳、dsh-Remote gateway/UI、许可证和上游说明齐全。
-2. **本地 gateway 启动**：Android 进程能够在 DSH Web 启动后拉起 gateway，并探测 `8787/health`。
-3. **WebView 接入**：WebView 访问本地 gateway，能完成首页、会话列表和历史读取。
-4. **实时闭环**：实时 mux/host、消息发送、审批和提问可用。
-5. **文件闭环**：SAF 授权目录映射到 DSH 工作区，支持浏览、上传、下载和工作区使用。
-6. **生命周期验收**：冷启动、后台恢复、引擎崩溃、gateway 崩溃和系统重启后自动恢复。
-7. **云端同步**：静态检查和可用 ABI 构建通过后，创建 `Blank-not-black/dsh-local-android` 并推送初始版本。
+2. **四层协调**：`BackendSupervisor` 只按安装 → Engine → Gateway → UI 顺序推进并归因失败。
+3. **本地 gateway 启动**：Android 进程能够在 DSH Web 启动后拉起 gateway，并探测 `8787/health`。
+4. **WebView 接入**：WebView 访问本地 gateway，能完成首页、会话列表和历史读取。
+5. **实时闭环**：实时 mux/host、消息发送、审批和提问可用。
+6. **文件闭环**：SAF 授权目录映射到 DSH 工作区，支持浏览、上传、下载和工作区使用。
+7. **生命周期验收**：冷启动、后台恢复、引擎崩溃、gateway 崩溃和系统重启后自动恢复。
+8. **云端同步**：静态检查和可用 ABI 构建通过后，推送独立仓库的对应分支。
 
 ## 暂不做
 

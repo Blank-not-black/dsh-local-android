@@ -69,7 +69,7 @@ ELF / cordis 挂载集⊇注入集 / LICENSES 自检（Python 流式）——任
 
 ## 桥协议 v1（`window.androidBridge`）
 
-应用名 `DeepCode`（图标文字 DeepSearch）、包名 `com.dsharnessmobile.shell`。
+应用名 `DSH for Android`、包名 `com.dsharnessmobile.shell`。
 `androidBridge.version` 返回应用版本号（当前 `0.13.0-preview`，versionCode 24），
 页面按它做 feature-detect。下列 ADB 方法为预览授权面——真实通道在 0.13.0 正式版完成。
 

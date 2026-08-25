@@ -67,7 +67,6 @@ class EngineService : Service() {
     watchdog = null
     try { engineManager.stopEngine() } catch (_: Exception) {
     }
-    LocalGatewayManager.stop()
   }
 
   /**
@@ -79,9 +78,6 @@ class EngineService : Service() {
    */
   private fun ensureEngine() {
     if (!engineManager.engineReady) return
-    // The local gateway is a sibling process of the embedded DSH web engine.
-    // It can reconnect its upstream collectors after an engine restart.
-    LocalGatewayManager.ensureRunning(this, engineManager)
     if (watchdog == null) {
       WatchdogV2.acquireWakeLock(this)
       watchdog = Executors.newSingleThreadScheduledExecutor().also { exec ->
@@ -132,8 +128,8 @@ class EngineService : Service() {
     )
     return NotificationCompat.Builder(this, "engine")
       .setSmallIcon(android.R.drawable.stat_notify_chat)
-      .setContentTitle("DeepCode 引擎运行中")
-      .setContentText("DeepCode 正在后台工作")
+      .setContentTitle("DSH for Android 引擎运行中")
+      .setContentText("DSH for Android 正在后台工作")
       .setContentIntent(pending)
       .setOngoing(true)
       .build()

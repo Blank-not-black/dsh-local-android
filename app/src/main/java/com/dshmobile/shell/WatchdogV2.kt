@@ -16,7 +16,7 @@ import java.io.File
  *   可达表示插件树健康）+ 引擎日志尾部异常扫描（engine.log 末尾 fatal/Error 关键字）。
  * - 熔断与指数退避：连续失败 → 指数退避（5s→10s→20s→40s→80s 封顶），超过熔断阈值（12 次连续失败）
  *   暂停看门狗并记录（界面提示由 GuideChrome 状态区显示），用户交互或探活成功自动复位。
- * - 开机自启：BOOT_COMPLETED 接收器恢复用户上次同意的运行状态（EngineService.userShutdown 持久化）。
+ * - 启动边界：后台看门狗只在 BackendSupervisor 完成安装 -> Engine -> Gateway -> UI handoff 后运行。
  * - 前台唤醒锁：引擎前台运行期间持有（PARTIAL_WAKE_LOCK，标准档位；获取失败降级尽力模式并记录）。
  * - 授权状态探活：ADB 配对断线时记录（F2.9，桥引导重新配对由桥层返回）。
  */
@@ -159,7 +159,7 @@ object WatchdogV2 {
   }
 }
 
-/** 开机自启（零改动原则：仅恢复用户上次同意状态；白名单/厂商跳转引导由设置面承托）。 */
+/** Legacy boot receiver kept as source reference; it is not registered in the local app manifest. */
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
@@ -168,12 +168,7 @@ class BootReceiver : BroadcastReceiver() {
       LogCollector.log("dsh-watchdog", "boot completed; auto-start disabled by user preference")
       return
     }
-    LogCollector.log("dsh-watchdog", "boot completed; starting engine service (user-consented state)")
-    try {
-      context.startForegroundService(Intent(context, EngineService::class.java))
-    } catch (t: Throwable) {
-      Log.e("dsh-watchdog", "boot start failed: " + t.message)
-    }
+    LogCollector.log("dsh-watchdog", "boot completed; backend start deferred until DSH for Android foreground startup")
   }
 }
 

@@ -34,6 +34,8 @@ object LogCollector {
 
   /** engine.log incremental read offset (in-process; restarts from the top on truncation/rotation). */
   private var engineLogOffset = 0L
+  /** local gateway.log incremental read offset. */
+  private var gatewayLogOffset = 0L
 
   /** Last seen logcat line timestamp (threadtime "MM-dd HH:mm:ss.SSS"; lexicographic order). */
   private var lastLogcatTs = ""
@@ -42,6 +44,7 @@ object LogCollector {
     if (executor != null) return
     appContext = context.applicationContext
     engineLogOffset = 0L
+    gatewayLogOffset = 0L
     lastLogcatTs = ""
     executor = Executors.newSingleThreadScheduledExecutor().also { exec ->
       exec.scheduleWithFixedDelay({ tick() }, 0, INTERVAL_MS, TimeUnit.MILLISECONDS)
@@ -90,6 +93,7 @@ object LogCollector {
       val sb = StringBuilder()
       sb.append(readLogcat())
       sb.append(readEngineLog(ctx))
+      sb.append(readGatewayLog(ctx))
       if (sb.isEmpty()) return
       appendToDayFile(ctx, sb.toString())
     } catch (t: Throwable) {
@@ -140,10 +144,30 @@ object LogCollector {
         val buf = ByteArray(size)
         val n = raf.read(buf)
         engineLogOffset = raf.filePointer
-        if (n <= 0) "" else String(buf, 0, n, Charsets.UTF_8)
+        if (n <= 0) "" else "[dsh-engine]\n" + String(buf, 0, n, Charsets.UTF_8)
       }
     } catch (t: Throwable) {
       Log.w(TAG, "engine.log tail failed: " + (t.message ?: t.javaClass.simpleName))
+      ""
+    }
+  }
+
+  /** Incremental local gateway log tail, kept visibly separate from DSH engine output. */
+  private fun readGatewayLog(ctx: Context): String {
+    val f = LocalGatewayManager.logFile(ctx)
+    if (!f.exists()) return ""
+    return try {
+      RandomAccessFile(f, "r").use { raf ->
+        if (gatewayLogOffset > raf.length()) gatewayLogOffset = 0
+        raf.seek(gatewayLogOffset)
+        val size = (raf.length() - gatewayLogOffset).toInt().coerceAtMost(MAX_ENGINE_CHUNK)
+        val buf = ByteArray(size)
+        val n = raf.read(buf)
+        gatewayLogOffset = raf.filePointer
+        if (n <= 0) "" else "[local-gateway]\n" + String(buf, 0, n, Charsets.UTF_8)
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "gateway.log tail failed: " + (t.message ?: t.javaClass.simpleName))
       ""
     }
   }

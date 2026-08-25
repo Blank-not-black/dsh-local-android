@@ -19,6 +19,8 @@ object LocalGatewayManager {
   private fun root(context: Context): File = File(context.filesDir, GATEWAY_DIR_NAME)
   private fun tokenFile(context: Context): File = File(root(context), TOKEN_NAME)
 
+  fun logFile(context: Context): File = File(root(context), "gateway.log")
+
   fun accessToken(context: Context): String = try {
     tokenFile(context).takeIf { it.exists() }?.readText()?.trim().orEmpty()
   } catch (_: Exception) {
@@ -39,7 +41,7 @@ object LocalGatewayManager {
         false
       } else {
         process?.let { old -> try { old.destroy() } catch (_: Throwable) {} }
-        val log = File(dir, "gateway.log")
+        val log = logFile(context)
         val env = engineManager.shellEnv().toMutableMap()
         env["HOST"] = "127.0.0.1"
         env["PORT"] = "8787"
