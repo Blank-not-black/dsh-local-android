@@ -64,6 +64,9 @@ Requirements: JDK 17+, Android SDK with API 36, and the matching ABI runtime sna
 snapshot is intentionally not committed; download it from the upstream Release and verify it
 against `app/src/main/assets/snapshot.sha256`.
 
+The current development pin is the arm64 snapshot for physical phones. For an x86_64 emulator,
+replace the snapshot and hash with the matching upstream x86_64 pair before building.
+
 ```powershell
 # Build with the locally downloaded snapshot:
 GRADLE_USER_HOME="$PWD/.gradle-home" ./gradlew assembleDebug

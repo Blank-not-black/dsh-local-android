@@ -55,6 +55,9 @@ adb install -r -t <apk>    # 同签名覆盖安装
 要求：JDK 17+、包含 API 36 的 Android SDK，以及与目标设备 ABI 匹配的运行时快照。快照不提交进
 Git，需要从上游 Release 下载，并与 `app/src/main/assets/snapshot.sha256` 校验。
 
+当前开发 pin 为面向实体手机的 arm64 快照。若使用 x86_64 模拟器，构建前需要换成上游匹配的
+x86_64 快照和哈希。
+
 ```powershell
 # 使用本地已下载并校验的快照构建：
 GRADLE_USER_HOME="$PWD/.gradle-home" ./gradlew assembleDebug
