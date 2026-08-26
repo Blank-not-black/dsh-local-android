@@ -105,7 +105,9 @@ dsh-local-android/
 `app/src/main/assets/snapshot.tar.xz`。
 
 当前面向实体手机的开发构建固定使用 arm64 minimal 快照。x86_64 模拟器必须替换成 x86_64 minimal 快照及其
-哈希，不能混用不同 ABI 的 Node/运行时。快照本体不提交 Git，哈希记录在 `app/src/main/assets/snapshot.sha256`。
+哈希，不能混用不同 ABI 的 Node/运行时。快照本体不提交 Git；完整归档哈希记录在
+`app/src/main/assets/snapshot.sha256`，仅运行时、库和 profile 的指纹记录在
+`app/src/main/assets/snapshot.runtime.sha256`。许可证/声明变化只更新声明文件，不触发完整运行时重解压。
 
 ```sh
 export JAVA_HOME=/home/blank/Android/jdk21
@@ -157,7 +159,8 @@ URI 或用户明确选择的本地工作区；本地 gateway 不能因为运行�
 
 本仓库使用 MIT 许可证。源自 dsh-mobile-apk 的 Android 壳和运行时保留上游版权及 MIT 声明；导入的
 dsh-Remote gateway/UI 在 `LICENSES/dsh-remote-MIT.txt` 中保留其 MIT 声明；其他运行时组件的许可证位于
-`app/src/main/assets/licenses/`。
+`app/src/main/assets/licenses/`。Termux 上游 GPL 声明位于同目录的 `TERMUX-LICENSE.md`；构建脚本会将同一份
+声明清单复制到快照的 `usr/share/LICENSES/`，并在 minimal 裁剪时保留各 Termux 包的 `usr/share/doc/<pkg>/copyright*`。
 
 具体的上游提交基线、复制路径和署名规则以
 [UPSTREAM.md](UPSTREAM.md) 为准。

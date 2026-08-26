@@ -5,7 +5,9 @@ import android.media.MediaScannerConnection
 import android.os.Environment
 import android.util.Log
 import java.io.File
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.security.MessageDigest
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
@@ -70,15 +72,65 @@ class EngineManager(private val context: Context, private val pickToken: String?
 
   private fun fingerprintFile(): File = File(context.filesDir, ".snapshot-fingerprint")
 
+  /** Runtime-only fingerprint; license/notice files are deliberately excluded from this identity. */
+  private fun bundledRuntimeFingerprint(): String = try {
+    context.assets.open("snapshot.runtime.sha256").bufferedReader().use { it.readText().trim() }
+  } catch (_: Exception) {
+    ""
+  }
+
+  private fun runtimeFingerprintFile(): File = File(context.filesDir, ".snapshot-runtime-fingerprint")
+
   /**
-   * Whether the snapshot is extracted and matches the embedded version: node exists + fingerprint match.
+   * Whether the runtime is extracted and matches the embedded version: node exists + runtime fingerprint.
+   * The runtime fingerprint excludes redistribution notices, so changing only licenses does not
+   * force a full Termux re-extraction. The legacy full fingerprint is still accepted as a one-time
+   * migration when it matches the bundled archive.
    * Upgrade lesson (v0.10.5→v0.10.6): engineReady only checked node existence, so an upgrade never
    * re-extracted → old plugins kept running (injection-guard fixes etc. never took effect).
    */
   fun snapshotFresh(): Boolean {
     if (!nodeBin.exists()) return false
+    val runtimeFp = bundledRuntimeFingerprint()
+    if (runtimeFp.isNotEmpty()) {
+      val storedRuntime = runtimeFingerprintFile()
+      if (storedRuntime.exists() && storedRuntime.readText().trim() == runtimeFp) return true
+
+      // Existing installs only have the old whole-archive marker. If it matches the
+      // current archive, migrate the marker without touching the extracted runtime.
+      val fullFp = bundledFingerprint()
+      if (fullFp.isNotEmpty()
+        && fingerprintFile().exists()
+        && fingerprintFile().readText().trim() == fullFp
+      ) {
+        try {
+          storedRuntime.writeText(runtimeFp)
+          Log.i(TAG, "snapshot fingerprint migrated to runtime-only identity")
+        } catch (t: Throwable) {
+          Log.w(TAG, "runtime fingerprint migration failed", t)
+        }
+        return true
+      }
+
+      // A legacy install may have the same executable/runtime tree but a
+      // different full hash because only redistribution notices changed. Do
+      // one content-only migration check so rc.1 -> rc.2 does not rewrite a
+      // 67 MB Termux tree just to deploy updated notices.
+      if (runtimeFingerprintOfExtractedTree() == runtimeFp) {
+        try {
+          storedRuntime.writeText(runtimeFp)
+          Log.i(TAG, "legacy snapshot migrated without runtime re-extraction")
+        } catch (t: Throwable) {
+          Log.w(TAG, "runtime fingerprint migration failed", t)
+        }
+        return true
+      }
+      return false
+    }
+
+    // Legacy APKs without the split marker retain the previous behavior.
     val fp = bundledFingerprint()
-    if (fp.isEmpty()) return true // no fingerprint file (legacy build): don't force a re-extract
+    if (fp.isEmpty()) return true
     return fingerprintFile().exists() && fingerprintFile().readText().trim() == fp
   }
 
@@ -111,8 +163,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
       }
       restoreUserData(backup, dsh)
       backup.deleteRecursively()
-      fingerprintFile().writeText(bundledFingerprint())
-      Log.i(TAG, "snapshot refreshed (fingerprint " + bundledFingerprint().take(12) + ")")
+      val fullFp = bundledFingerprint()
+      if (fullFp.isNotEmpty()) fingerprintFile().writeText(fullFp)
+      val runtimeFp = bundledRuntimeFingerprint()
+      if (runtimeFp.isNotEmpty()) runtimeFingerprintFile().writeText(runtimeFp)
+      Log.i(TAG, "snapshot refreshed (runtime fingerprint " + runtimeFp.take(12) + ")")
       return true
     } catch (t: Throwable) {
       restoreUserData(backup, dsh)
@@ -143,6 +198,76 @@ class EngineManager(private val context: Context, private val pickToken: String?
     }
   }
 
+  /**
+   * Compute the runtime-only identity of an already extracted tree. This is
+   * used only when an older install has no split marker; normal boots compare
+   * the small marker file and do not hash the runtime again.
+   */
+  private fun runtimeFingerprintOfExtractedTree(): String? {
+    val root = context.filesDir.toPath().toAbsolutePath().normalize()
+    // home/.dsh also contains sessions, workspaces, credentials and settings
+    // restored from the previous install. They are user data, not embedded
+    // runtime content, so only the factory profile participates in migration.
+    val roots = listOf(
+      usrDir.toPath(),
+      File(homeDir, ".dsh/profiles").toPath(),
+    )
+    if (roots.any { !Files.exists(it) }) return null
+
+    val entries = mutableListOf<java.nio.file.Path>()
+    for (top in roots) {
+      Files.walk(top).use { stream ->
+        stream.forEach { path ->
+          if (path != top && (!Files.isDirectory(path) || Files.isSymbolicLink(path))) entries.add(path)
+        }
+      }
+    }
+    entries.sortBy { relativeRuntimePath(root, it) }
+
+    val digest = MessageDigest.getInstance("SHA-256")
+    for (path in entries) {
+      val relative = relativeRuntimePath(root, path)
+      if (isRuntimeNoticePath(relative)) continue
+      when {
+        Files.isSymbolicLink(path) -> updateRuntimeDigest(
+          digest, "L\t" + relative + "\t" + Files.readSymbolicLink(path).toString() + "\n",
+        )
+        Files.isRegularFile(path) -> updateRuntimeDigest(
+          digest, "F\t$relative\t" + hexDigest(digestFile(path)) + "\n",
+        )
+        else -> updateRuntimeDigest(digest, "X\t$relative\n")
+      }
+    }
+    return hexDigest(digest.digest())
+  }
+
+  private fun relativeRuntimePath(root: java.nio.file.Path, path: java.nio.file.Path): String =
+    root.relativize(path.toAbsolutePath().normalize()).toString().replace(File.separatorChar, '/')
+
+  private fun isRuntimeNoticePath(relative: String): Boolean =
+    relative == "usr/share/LICENSES" || relative.startsWith("usr/share/LICENSES/")
+      || relative == "usr/share/doc" || relative.startsWith("usr/share/doc/")
+
+  private fun digestFile(path: java.nio.file.Path): ByteArray {
+    val digest = MessageDigest.getInstance("SHA-256")
+    Files.newInputStream(path).use { input ->
+      val buffer = ByteArray(64 * 1024)
+      var count = input.read(buffer)
+      while (count >= 0) {
+        digest.update(buffer, 0, count)
+        count = input.read(buffer)
+      }
+    }
+    return digest.digest()
+  }
+
+  private fun updateRuntimeDigest(digest: MessageDigest, value: String) {
+    digest.update(value.toByteArray(StandardCharsets.UTF_8))
+  }
+
+  private fun hexDigest(bytes: ByteArray): String =
+    bytes.joinToString("") { "%02x".format(it) }
+
   /** Process-level start guard (MainActivity and EngineService each construct their own EngineManager;
    *  instance fields are invisible across them — the double-start race needs companion-level CAS). */
   private val starting: Boolean
@@ -156,8 +281,11 @@ class EngineManager(private val context: Context, private val pickToken: String?
    */
   fun extractSnapshot(onProgress: (Long, Long) -> Unit): Boolean {
     return try {
-      val fd = context.assets.openFd("snapshot.tar.xz")
-      SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), fd.length, usrDir.parentFile, onProgress)
+      // SnapshotExtractor reports uncompressed tar bytes. The APK asset length
+      // is the compressed xz size, so passing it as a total made the UI report
+      // values such as 329 MB against a much smaller denominator. Keep the
+      // total unknown and render extraction as an indeterminate operation.
+      SnapshotExtractor.extract(context.assets.open("snapshot.tar.xz"), 0L, context.filesDir, onProgress)
       homeDir.mkdirs()
       true
     } catch (t: Throwable) {
@@ -410,6 +538,32 @@ class EngineManager(private val context: Context, private val pickToken: String?
       File(dshPkgs, "dsh-fs-local/lib/index.js"))
   }
 
+  /** Refresh project-level redistribution notices without replacing the embedded runtime. */
+  private fun deployRuntimeLicenses() {
+    try {
+      val names = context.assets.list("licenses").orEmpty()
+      if (names.isEmpty()) return
+      val targetDir = File(usrDir, "share/LICENSES")
+      targetDir.mkdirs()
+      var updated = 0
+      for (name in names) {
+        if (!name.matches(Regex("^[A-Za-z0-9._-]+$"))) continue
+        val bytes = context.assets.open("licenses/$name").use { it.readBytes() }
+        val target = File(targetDir, name)
+        if (target.exists() && target.readBytes().contentEquals(bytes)) continue
+        target.writeBytes(bytes)
+        target.setReadable(false, false)
+        target.setReadable(true, true)
+        target.setWritable(true, true)
+        updated++
+      }
+      if (updated > 0) Log.i(TAG, "runtime license notices updated: $updated")
+    } catch (t: Throwable) {
+      // Notices must not prevent the engine from starting; the bundled archive still carries them.
+      Log.w(TAG, "runtime license notice update failed", t)
+    }
+  }
+
   /** Overwrite-style patch: applies when the target differs from the bundled asset (content
    *  fingerprint), so an updated asset re-applies on upgrade instead of being skipped by a stale
    *  marker string (the v1→v2 asset-update failure).
@@ -519,6 +673,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
     return try {
       // 旧进程清理：无论句柄是否还在，先终结残留（引擎挂死/内存里 fork 掉的孤儿）。
       killExistingEngine()
+      deployRuntimeLicenses()
       applyRuntimePatches()
       // --no-open: the engine must never try to open a desktop browser on Android
       // (the WebView IS the UI). Without it, rc.2's spawn xdg-open on a missing

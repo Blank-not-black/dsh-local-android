@@ -130,9 +130,12 @@ is large and is intentionally not committed to Git; place the matching
 snapshot at `app/src/main/assets/snapshot.tar.xz` before building.
 
 The current phone build is pinned to an arm64 minimal snapshot. An x86_64
-emulator requires an x86_64 minimal snapshot and matching hash; do not mix
-runtime ABIs. The snapshot itself is not committed; its hash is recorded in
-`app/src/main/assets/snapshot.sha256`.
+emulator requires an x86_64 minimal snapshot and matching hashes; do not mix
+runtime ABIs. The snapshot itself is not committed; its full archive hash is
+recorded in `app/src/main/assets/snapshot.sha256`, while
+`app/src/main/assets/snapshot.runtime.sha256` identifies only the executable,
+libraries, and profile. License/notice changes update the former without
+forcing a full runtime re-extraction.
 
 ```sh
 export JAVA_HOME=/home/blank/Android/jdk21
@@ -193,7 +196,10 @@ This repository is MIT licensed. The Android shell/runtime portions derived
 from dsh-mobile-apk retain the upstream copyright and MIT notice. The imported
 dsh-Remote gateway/UI is accompanied by its MIT notice in
 `LICENSES/dsh-remote-MIT.txt`. Other bundled runtime components retain their
-own notices under `app/src/main/assets/licenses/`.
+own notices under `app/src/main/assets/licenses/`. The Termux upstream GPL notice
+is in `TERMUX-LICENSE.md`; the same notice inventory is copied into the embedded
+snapshot under `usr/share/LICENSES/`, and package-specific copyright files are
+retained during minimal trimming.
 
 For the exact source baseline, copied paths, and attribution rules, read
 [UPSTREAM.md](UPSTREAM.md).

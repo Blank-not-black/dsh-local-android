@@ -16,8 +16,8 @@ test('Android app and local WebView use the DSH for Android identity', () => {
   assert.match(strings, /<string name="app_name">DSH for Android<\/string>/)
 })
 
-test('Android and gateway versions are pinned to the first release candidate', () => {
-  assert.equal(gatewayVersion.version, '0.1.0-rc.1')
-  assert.match(gradle, /versionName = "0\.1\.0-rc\.1" \+ snapshotSuffix/)
-  assert.match(gradle, /versionCode = 25/)
+test('Android and gateway versions are pinned to the third release candidate', () => {
+  assert.equal(gatewayVersion.version, '0.1.0-rc.3')
+  assert.match(gradle, /versionName = "0\.1\.0-rc\.3" \+ snapshotSuffix/)
+  assert.match(gradle, /versionCode = 27/)
 })

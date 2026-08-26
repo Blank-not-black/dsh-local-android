@@ -19,4 +19,4 @@ The imported dsh-Remote files are adapted for local-only Android use. Changes to
 
 ## Third-party runtime
 
-The embedded DSH runtime contains components under licenses other than MIT. The corresponding notices in `app/src/main/assets/licenses/` must remain in source distributions and APK assets. New runtime components require a license entry before packaging.
+The embedded DSH runtime is assembled from the Termux package ecosystem and contains components under licenses other than MIT. The Termux GPL notice is recorded in `app/src/main/assets/licenses/TERMUX-LICENSE.md`; the generic GPL/LGPL texts and package inventory are kept in `app/src/main/assets/licenses/` and copied into the runtime snapshot under `usr/share/LICENSES/`. The minimal builder also retains package-specific `usr/share/doc/<pkg>/copyright*` and other standard license filenames. New runtime components require a license entry before packaging.

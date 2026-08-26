@@ -78,11 +78,15 @@ class MainActivity : ComponentActivity() {
   /** 用户主动关闭后，前台监控与任何尚未结束的启动线程不得重新展示 WebUI。 */
   @Volatile
   private var userClosedEngine = false
+  /** Activity 不在前台时，WebView 可能被 Android 限速；此状态禁止页面冻结误报和前台探测。 */
+  @Volatile
+  private var activityInForeground = false
   /** 前台引擎监控：3s 轮询探测，down→测试界面、up→恢复 WebUI
    *  （"设置里杀进程/引擎崩溃回退测试界面"的落地；watchdog 负责恢复）。 */
   private val engineMonitorHandler = android.os.Handler(android.os.Looper.getMainLooper())
   private val engineMonitorRunnable = object : Runnable {
     override fun run() {
+      if (!activityInForeground || userClosedEngine) return
       val monitor = this
       Thread {
         val running = try {
@@ -90,7 +94,7 @@ class MainActivity : ComponentActivity() {
             GatewayProbe.check(500).optBoolean("running", false)
         } catch (_: Exception) { false }
         runOnUiThread {
-          if (::webView.isInitialized && ::guideView.isInitialized && !userClosedEngine) {
+          if (activityInForeground && ::webView.isInitialized && ::guideView.isInitialized && !userClosedEngine) {
             if (!running && webView.visibility == View.VISIBLE) {
               backendReady = false
               applyGuidePhase(GuidePhase.Recovering, "引擎未运行，正在自动恢复…")
@@ -100,7 +104,7 @@ class MainActivity : ComponentActivity() {
               showWeb()
             }
           }
-          if (!userClosedEngine) engineMonitorHandler.postDelayed(monitor, 3000)
+          if (activityInForeground && !userClosedEngine) engineMonitorHandler.postDelayed(monitor, 3000)
         }
       }.start()
     }
@@ -117,7 +121,7 @@ class MainActivity : ComponentActivity() {
   private var freezeReloaded = false
   private val freezeRunnable = object : Runnable {
     override fun run() {
-      if (!::webView.isInitialized || userClosedEngine || webView.visibility != View.VISIBLE) return
+      if (!activityInForeground || !::webView.isInitialized || userClosedEngine || webView.visibility != View.VISIBLE) return
       val now = System.currentTimeMillis()
       if (now - pageLoadedAt > 45_000 && now - jsAckAt > 20_000) {
         LogCollector.log("dsh-shell", "webview JS 无响应，渲染进程冻结（frozenMs=" + (now - jsAckAt) + "）")
@@ -150,7 +154,7 @@ class MainActivity : ComponentActivity() {
   }
 
   private fun startFreezeWatchdog() {
-    if (userClosedEngine || !::webView.isInitialized || webView.visibility != View.VISIBLE) return
+    if (!activityInForeground || userClosedEngine || !::webView.isInitialized || webView.visibility != View.VISIBLE) return
     val now = System.currentTimeMillis()
     pageLoadedAt = now
     jsAckAt = now
@@ -525,10 +529,40 @@ class MainActivity : ComponentActivity() {
   /** 首启向导已移除（决策 2026-08-23）：初始页（GuideChrome 运行时状态/解压进度/崩溃/日志）
    *  已足够承载首启信息；配置项（共享目录/镜像/ADB 授权）经设置面与「工具与环境」页承托。 */
 
+  /** 将 Android Activity 生命周期显式同步给 Web UI；部分 WebView 不会可靠派发 visibilitychange。 */
+  private fun dispatchWebLifecycle() {
+    if (!::webView.isInitialized) return
+    try {
+      webView.evaluateJavascript(
+        "window.__dshAppLifecycle?.setBackgrounded(" + (!activityInForeground) + ")",
+        null,
+      )
+    } catch (_: Exception) {
+    }
+  }
+
+  override fun onStart() {
+    super.onStart()
+    activityInForeground = true
+    dispatchWebLifecycle()
+    if (!userClosedEngine && ::webView.isInitialized && webView.visibility == View.VISIBLE) {
+      startFreezeWatchdog()
+    }
+  }
+
+  override fun onStop() {
+    activityInForeground = false
+    engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
+    freezeHandler.removeCallbacks(freezeRunnable)
+    pingOutstanding = false
+    dispatchWebLifecycle()
+    super.onStop()
+  }
+
   override fun onResume() {
     super.onResume()
     // 前台引擎监控：引擎被杀/崩溃时自动回退测试界面，恢复后回 WebUI。
-    if (!userClosedEngine) {
+    if (activityInForeground && !userClosedEngine) {
       engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
       engineMonitorHandler.post(engineMonitorRunnable)
     }
@@ -628,6 +662,7 @@ class MainActivity : ComponentActivity() {
   }
 
   override fun onDestroy() {
+    activityInForeground = false
     super.onDestroy()
     engineMonitorHandler.removeCallbacks(engineMonitorRunnable)
     freezeHandler.removeCallbacks(freezeRunnable)
@@ -710,6 +745,7 @@ class MainActivity : ComponentActivity() {
         super.onPageFinished(view, url)
         pushSystemDark(view)
         pushWebInsets(view)
+        dispatchWebLifecycle()
         if (isEngineSource(url) && !userClosedEngine) startFreezeWatchdog()
       }
     }
@@ -1534,9 +1570,12 @@ class MainActivity : ComponentActivity() {
         BackendStage.UI -> Unit
       }
       is BackendEvent.InstallProgress -> {
-        val mb = event.bytesDone / 1024 / 1024
         progressText.visibility = View.VISIBLE
-        progressText.text = "已写入 " + mb + " MB"
+        // The extractor reports uncompressed bytes, while the APK only knows
+        // the compressed asset length. Showing a numeric denominator here used
+        // to make the install appear stuck at 329 MB. The progress indicator is
+        // intentionally indeterminate until a comparable total is available.
+        progressText.text = "正在写入内嵌运行时…"
       }
       is BackendEvent.Ready -> when (event.stage) {
         BackendStage.INSTALL -> progressText.visibility = View.GONE

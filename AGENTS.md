@@ -119,7 +119,8 @@ JAVA_HOME=/home/blank/Android/jdk21 \
 Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。
 
 当前仓库 pin 的快照是实体手机用 arm64 minimal 版本，`app/src/main/assets/snapshot.tar.xz` 被
-`.gitignore` 忽略，其哈希记录在 `app/src/main/assets/snapshot.sha256`。x86_64 模拟器必须换用匹配的
+`.gitignore` 忽略，其完整哈希记录在 `app/src/main/assets/snapshot.sha256`，运行时指纹记录在
+`app/src/main/assets/snapshot.runtime.sha256`。x86_64 模拟器必须换用匹配的
 minimal 快照和哈希，不能混用。完整快照不随仓库提交；需要增补 capability pack 时，以完整快照作为输入
 重新裁剪，不直接修改已生成的 minimal 产物。
 
@@ -175,3 +176,10 @@ minimal 快照和哈希，不能混用。完整快照不随仓库提交；需要
 | 2026-08-26 | 0.1.4-local | 增加可重复的 arm64 minimal 快照裁剪，默认 profile 与可选 capability pack 边界明确。 |
 | 2026-08-26 | 0.1.5-local | 保留 minimal profile 的四个基础冲突禁用项，完成 Waydroid x86_64 端到端启动验证。 |
 | 2026-08-26 | 0.1.0-rc.1 | 增加设置-模型配置，支持提供方、API 密钥、API 地址、模型目录和模型发现；统一 DSH for Android 品牌与版本。 |
+| 2026-08-26 | 0.1.0-rc.1 | 修复退后台时 WebView 冻结误报与事件流重连噪声；保留 minimal 快照中的 Termux GPL 与第三方许可证声明。 |
+| 2026-08-26 | 0.1.0-rc.1 | 修复本地流式输出期间历史/思考区域被高频重绘导致的滚动中断。 |
+| 2026-08-26 | 0.1.0-rc.1 | 修复本地权限预设菜单把选择写入输入框并回落为普通提示词；改用 DSH `commands/execute` 控制面直接切换。 |
+| 2026-08-27 | 0.1.0-rc.2 | 发布版本升级：包含后台生命周期、流式滚动和本地权限命令控制面修复。 |
+| 2026-08-27 | 0.1.0-rc.2 | 将运行时快照指纹与许可证声明拆分；声明更新仅覆盖 LICENSES，不再触发完整 Termux 重解压。 |
+| 2026-08-27 | 0.1.0-rc.2 | 修正旧安装迁移指纹误把 home 用户数据算入运行时；修正解压进度把压缩/解压大小混用导致的 329MB 假卡顿显示。 |
+| 2026-08-27 | 0.1.0-rc.3 | 发布运行时迁移与解压进度修正版，提升 versionCode 至 27，避免与旧 rc.2 APK 混淆。 |

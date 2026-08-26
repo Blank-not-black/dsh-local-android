@@ -534,6 +534,44 @@ async function safeRpc(method, payload, errText) {
   }
 }
 
+/** Execute one local DSH slash command through the Typert command plane. */
+async function runLocalSlashCommand(clean) {
+  const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(20000)
+    : undefined
+  const res = await fetch(apiUrl('/api/commands/execute'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token, 'x-dsh-remote-client': 'app', ...clientIdHeaders() },
+    body: JSON.stringify({
+      type: 'client-request',
+      rpcId: uuid(),
+      method: 'commands/execute',
+      payload: { args: { agentId: state.current, line: clean, images: [] } }
+    }),
+    ...(signal ? { signal } : {})
+  })
+  if (res.status === 401) { authFailure(); return true }
+  if (!res.ok) throw new Error('HTTP ' + res.status)
+  const full = await res.json()
+  if (!full?.result) throw new Error(t('err.badResponse'))
+  if (!full.result.ok) {
+    const err = full.result.error || {}
+    toast(err.message || t('send.failed'), 'err')
+    return true
+  }
+  const execution = full.result.value
+  if (execution === undefined) {
+    toast(`未知或格式错误的命令：${clean}`, 'err')
+    return true
+  }
+  if (execution.result?.kind === 'error') {
+    toast(execution.result.text || t('send.failed'), 'err')
+    return true
+  }
+  toast(t('send.commandExecuted'), 'ok')
+  return true
+}
+
 function authFailure() {
   toast(t('err.accessDenied'), 'err')
   showView('view-settings')
@@ -952,6 +990,10 @@ let pollTimer = null
 let wsRetryTimer = null
 let connTickTimer = null
 let reconnectInfo = null
+// Android may keep the WebView technically visible while the Activity is stopped.
+// Keep an explicit native lifecycle bit so background throttling cannot turn into
+// a reconnect loop or a stale connection banner when the user returns.
+let nativeBackgrounded = false
 
 function clearStreamTimers(ws) {
   if (!ws) return
@@ -1019,14 +1061,14 @@ function clearReconnect() {
 }
 
 function openStreams() {
-  if (!state.token) return
+  if (!state.token || nativeBackgrounded) return
   if (state.streamMode !== 'poll') state.streamMode = 'ws'
   openStream('mux', onMuxFrame, true)
   openStream('host', onHostFrame, false)
 }
 
 function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
-  if (!state.token) return
+  if (!state.token || nativeBackgrounded) return
   if (ticket === null) {
     const token = state.token
     void getWsTicket().then((value) => {
@@ -1092,8 +1134,9 @@ function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
   }
   ws.onmessage = (msg) => {
     if (!streamIsCurrent(kind, ws, generation)) return
-    state.streamsOk[kind] = true
-    updateConn()
+    // onopen/onclose already update connection state. Repainting the overview
+    // for every streamed frame causes unnecessary layout churn while the user
+    // is dragging the history scroller.
     try {
       const full = JSON.parse(msg.data)
       handler(full)
@@ -1113,7 +1156,10 @@ function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
     meta.failures++
     aggregateStreamFailures()
     updateConn()
-    if (!navigator.onLine) { clearReconnect(); return }
+    if (!navigator.onLine || nativeBackgrounded || document.visibilityState !== 'visible') {
+      clearReconnect()
+      return
+    }
     // 任一通道连续失败 3 次就降级轮询；另一个通道不会清零它的失败计数。
     if (state.streamMode !== 'poll' && meta.failures >= 3) { enterPollMode(); return }
     // 多服务器: 连续掉线若干次就重测速, 自动换到当前可达的最快地址
@@ -1219,15 +1265,15 @@ async function pollKind(kind) {
 }
 
 function tryRestoreWs() {
-  if (state.streamMode !== 'poll' || !state.token) return
+  if (state.streamMode !== 'poll' || !state.token || nativeBackgrounded) return
   // 轮询继续跑，等 WS 真正 onopen 后再切回，避免重连窗口丢事件
   if (!streams.mux && !streamMeta.mux.retryTimer) openStream('mux', onMuxFrame, true, true)
   if (!streams.host && !streamMeta.host.retryTimer) openStream('host', onHostFrame, false, true)
 }
 
 /* 回前台恢复: 强制重排修复 MIUI WebView 后台切回时 sticky 顶栏不绘制的问题 */
-function onResume() {
-  if (document.visibilityState !== 'visible') return
+function onResume(force = false) {
+  if (!force && document.visibilityState !== 'visible') return
   applyNativeInsets()
   // 视图状态与 body class 兜底同步(会话页顶栏按设计隐藏, 主页必须恢复显示)
   document.body.classList.toggle('in-session', !$('view-session').classList.contains('hidden'))
@@ -1241,23 +1287,49 @@ function onResume() {
   updateConn()
 }
 
+function pauseRealtimeForBackground() {
+  nativeBackgrounded = true
+  clearReconnect()
+  clearStreamRetry('mux')
+  clearStreamRetry('host')
+  closeStream('mux')
+  closeStream('host')
+  if (state.streamMode === 'poll') stopPolling()
+  updateConn()
+}
+
+function resumeRealtimeForForeground(force = false) {
+  nativeBackgrounded = false
+  if (!force && document.visibilityState !== 'visible') return
+  onResume(force)
+  if (state.servers.length) selectFastestServer({ silent: true })
+  else if (state.token && (streams.mux?.readyState !== WebSocket.OPEN || streams.host?.readyState !== WebSocket.OPEN)) openStreams()
+}
+
+// Native Android lifecycle is authoritative because some vendor WebViews do not
+// dispatch visibilitychange when their Activity enters the background.
+window.__dshAppLifecycle = {
+  setBackgrounded(value) {
+    const next = !!value
+    if (next) pauseRealtimeForBackground()
+    else resumeRealtimeForForeground(true)
+  }
+}
+
 /* 回前台 / 定时兜底: 任何流不在 OPEN 就重连; 多服务器时顺便重测速 */
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    onResume()
-    if (state.servers.length) selectFastestServer({ silent: true })
-    else if (state.token && (streams.mux?.readyState !== WebSocket.OPEN || streams.host?.readyState !== WebSocket.OPEN)) openStreams()
-  }
+  if (document.visibilityState === 'visible') resumeRealtimeForForeground()
+  else pauseRealtimeForBackground()
 })
-window.addEventListener('pageshow', onResume)
+window.addEventListener('pageshow', () => resumeRealtimeForForeground())
 setInterval(() => {
-  if (document.visibilityState === 'visible' && state.token) {
+  if (!nativeBackgrounded && document.visibilityState === 'visible' && state.token) {
     if (streams.mux?.readyState !== WebSocket.OPEN || streams.host?.readyState !== WebSocket.OPEN) openStreams()
   }
 }, 15000)
 // 多服务器: 每 5 分钟重测一次延迟, 网络环境变化(离开 Wi-Fi / 挂上 Tailscale)时自动换线
 setInterval(() => {
-  if (document.visibilityState === 'visible' && state.servers.length) selectFastestServer({ silent: true })
+  if (!nativeBackgrounded && document.visibilityState === 'visible' && state.servers.length) selectFastestServer({ silent: true })
 }, 300000)
 
 /* 网络感知: 离线立刻关 WS + 显示离线, 在线立即重连 */
@@ -1272,7 +1344,7 @@ window.addEventListener('online', () => {
   if (!state.token) { updateConn(); return }
   state.errCount = 0
   clearReconnect()
-  openStreams()
+  if (!nativeBackgrounded && document.visibilityState === 'visible') openStreams()
   updateConn()
 })
 
@@ -1989,24 +2061,62 @@ function applyReasoningStreamEvent(event) {
   return changed
 }
 
+function reasoningItems() {
+  return [...state.history.partialReasoning.values()]
+    .filter(item => item.text)
+    .sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.step ?? 0) - (b.step ?? 0) || (a.index ?? 0) - (b.index ?? 0))
+}
+
+function reasoningLiveHtml(item) {
+  const key = reasoningStreamKey(item, item.index)
+  return `<div class="msg assistant reasoning-live" data-reasoning-live="${esc(key)}"><div class="role">${esc(t('role.dsh'))}</div><details class="tool" open><summary>${esc(t('block.thinkingLive'))}</summary><div class="tool-text">${esc(truncate(item.text, 12000))}</div></details></div>`
+}
+
+function partialReasoningHtml() {
+  return reasoningItems().map(reasoningLiveHtml).join('')
+}
+
+/** Update only the live thinking nodes. Replacing #history.innerHTML here
+ * cancels Android WebView scroll gestures and resets nested thinking scroll. */
+function renderLiveReasoning() {
+  const box = $('history')
+  if (!box) return
+  const items = reasoningItems()
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 240
+  const existing = new Map(
+    [...box.querySelectorAll('[data-reasoning-live]')].map(node => [node.dataset.reasoningLive, node]),
+  )
+  const active = new Set()
+  if (items.length && box.children.length === 1 && box.firstElementChild?.classList.contains('empty')) {
+    box.firstElementChild.remove()
+  }
+  for (const item of items) {
+    const key = reasoningStreamKey(item, item.index)
+    active.add(key)
+    const node = existing.get(key)
+    if (node) {
+      const text = node.querySelector('.tool-text')
+      const next = truncate(item.text, 12000)
+      if (text && text.textContent !== next) text.textContent = next
+    } else {
+      box.insertAdjacentHTML('beforeend', reasoningLiveHtml(item))
+    }
+  }
+  for (const [key, node] of existing) {
+    if (!active.has(key)) node.remove()
+  }
+  if (nearBottom) box.scrollTop = box.scrollHeight
+  updateRail()
+}
+
 let reasoningRenderTimer = null
 function scheduleReasoningRender() {
   if (reasoningRenderTimer) return
   reasoningRenderTimer = setTimeout(() => {
     reasoningRenderTimer = null
     if (!state.current) return
-    const box = $('history')
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 240
-    renderHistory(false, nearBottom ? 'bottom' : 'fixed')
+    renderLiveReasoning()
   }, 80)
-}
-
-function partialReasoningHtml() {
-  return [...state.history.partialReasoning.values()]
-    .filter(item => item.text)
-    .sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.step ?? 0) - (b.step ?? 0) || (a.index ?? 0) - (b.index ?? 0))
-    .map(item => `<div class="msg assistant reasoning-live"><div class="role">${esc(t('role.dsh'))}</div><details class="tool" open><summary>${esc(t('block.thinkingLive'))}</summary><div class="tool-text">${esc(truncate(item.text, 12000))}</div></details></div>`)
-    .join('')
 }
 
 function trimVisible() {
@@ -2494,6 +2604,17 @@ async function interruptSubagent(childId) {
 async function runSlashCommand(text) {
   const clean = String(text || '').trim()
   if (!clean.startsWith('/') || !state.current) return false
+  if (LOCAL_MODE) {
+    try {
+      return await runLocalSlashCommand(clean)
+    } catch (e) {
+      if (e.message === 'AUTH') authFailure()
+      else toast(`${t('send.failed')}：${e?.message || e}`, 'err')
+      // A local command is a control-plane operation. Never submit it to the
+      // model as ordinary user text when the command transport fails.
+      return true
+    }
+  }
   try {
     const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
       ? AbortSignal.timeout(20000)
@@ -5981,11 +6102,8 @@ function bindUi() {
     }
     const perm = e.target.closest('[data-perm]')
     if (perm) {
-      const input = $('composer-input')
-      input.value = '/permission ' + perm.dataset.perm + ' '
-      input.focus()
-      autosize(input)
       hideComposerMenu()
+      void runSlashCommand('/permission ' + perm.dataset.perm)
       return
     }
     const preset = e.target.closest('[data-preset]')

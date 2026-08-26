@@ -113,17 +113,26 @@ remove_bins adb fastboot avbtool append2simg img2simg ext2simg simg2img \
 rm -rf -- "$stage_dir/usr/share/android-tools"
 
 # Keep the console's basic shell utilities, but omit editors, network
-# diagnostics, and large documentation trees from the default image.
+# diagnostics, and non-license documentation from the default image. Termux
+# places package-specific copyright notices at usr/share/doc/<pkg>/copyright*;
+# those files are part of the redistribution notices and must survive the
+# minimal trim.
 remove_bins vim 'vim*' nano dialog less lessecho lesskey zsh 'socat*' nc \
   netcat 'netcat*' ping ping6 ftp tftp 'telnet*' ifconfig netstat route rarp \
   arp ipmaddr iptunnel mii-tool
+doc_dir="$stage_dir/usr/share/doc"
+if [[ -d "$doc_dir" ]]; then
+  find "$doc_dir" \( -type f -o -type l \) \
+    ! \( -name 'copyright' -o -name 'copyright.*' -o -iname 'license*' \
+      -o -iname 'copying*' -o -iname 'notice*' \) -delete
+  find "$doc_dir" -depth -type d -empty -delete
+fi
 for relative_path in \
   usr/share/vim \
   usr/share/nano \
   usr/share/zsh \
   usr/share/man \
   usr/share/info \
-  usr/share/doc \
   usr/share/emacs \
   usr/share/examples \
   usr/share/fish \
@@ -132,6 +141,18 @@ for relative_path in \
   usr/share/bash-completion; do
   rm -rf -- "$stage_dir/$relative_path"
 done
+
+# Keep the project-level inventory and the upstream Termux GPL notice inside
+# the runtime archive as well as under app/src/main/assets/licenses/. The
+# generic GPL/LGPL texts already present in usr/share/LICENSES are retained.
+license_dir="$stage_dir/usr/share/LICENSES"
+mkdir -p -- "$license_dir"
+install -m 0644 \
+  "$repo_root/app/src/main/assets/licenses/THIRD_PARTY_NOTICES.md" \
+  "$license_dir/THIRD_PARTY_NOTICES.md"
+install -m 0644 \
+  "$repo_root/app/src/main/assets/licenses/TERMUX-LICENSE.md" \
+  "$license_dir/TERMUX-LICENSE.md"
 
 # Keep only the four profile plugins required by the minimal boot path. The
 # profile directory itself is retained so future packs can be layered on top.
@@ -159,6 +180,43 @@ fi
 
 minimal_profile="$repo_root/runtime/minimal/cordis.patch.yml"
 install -m 0644 "$minimal_profile" "$profile_dir/cordis.patch.yml"
+
+# The full archive fingerprint includes redistribution notices, but notice-only
+# changes must not force a full Termux re-extraction on installed devices. Keep
+# a second deterministic fingerprint for the executable/runtime tree and the
+# profile. The device compares this marker while deploying notices separately.
+# Only usr/ and the factory profile are included: everything else below home/
+# is user data restored across upgrades and must never invalidate the runtime.
+# Hash file contents and link targets rather than archive metadata: Android's
+# extractor normalizes owner permissions, so tar metadata cannot be compared
+# with an extracted tree during legacy marker migration.
+runtime_fingerprint_file="$repo_root/app/src/main/assets/snapshot.runtime.sha256"
+runtime_manifest() {
+  local absolute relative content_hash
+  while IFS= read -r absolute; do
+    relative=${absolute#"$stage_dir"/}
+    if [[ -L "$absolute" ]]; then
+      printf 'L\t%s\t%s\n' "$relative" "$(readlink -- "$absolute")"
+    elif [[ -d "$absolute" ]]; then
+      # Directory presence is implied by the files below it and is not stable
+      # across Java extraction. Avoid hashing metadata-only empty directories.
+      continue
+    elif [[ -f "$absolute" ]]; then
+      content_hash=$(sha256sum -- "$absolute" | awk '{print $1}')
+      printf 'F\t%s\t%s\n' "$relative" "$content_hash"
+    else
+      printf 'X\t%s\n' "$relative"
+    fi
+  done < <(
+    find "$stage_dir/usr" "$stage_dir/home/.dsh/profiles" -mindepth 1 \
+      \( -path "$stage_dir/usr/share/LICENSES" -o -path "$stage_dir/usr/share/LICENSES/*" \
+        -o -path "$stage_dir/usr/share/doc" -o -path "$stage_dir/usr/share/doc/*" \) -prune -o \
+      -print | LC_ALL=C sort
+  )
+}
+runtime_fingerprint=$(runtime_manifest | sha256sum | awk '{print $1}')
+printf '%s\n' "$runtime_fingerprint" > "$runtime_fingerprint_file"
+echo "runtime fingerprint: $runtime_fingerprint"
 
 mkdir -p -- "$(dirname -- "$output_archive")"
 rm -f -- "$output_archive"

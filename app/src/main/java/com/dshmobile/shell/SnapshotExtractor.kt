@@ -24,9 +24,10 @@ object SnapshotExtractor {
   /**
    * Extract an xz-compressed tar stream.
    * @param input raw xz stream.
-   * @param totalBytes expected stream size (for progress; 0 = unknown).
+   * @param totalBytes expected uncompressed stream size (0 = unknown). The
+   *                    extractor cannot use the compressed APK asset length.
    * @param dest destination root (filesDir; the archive holds usr/ + home/).
-   * @param onProgress bytesDone, bytesTotal.
+   * @param onProgress uncompressedBytesDone, uncompressedBytesTotal.
    */
   fun extract(input: InputStream, totalBytes: Long, dest: File, onProgress: (Long, Long) -> Unit) {
     val xz = XZCompressorInputStream(input)

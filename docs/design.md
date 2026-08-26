@@ -241,7 +241,8 @@ SAF 文件访问 → 引擎或 Gateway 单独崩溃恢复。没有连接 Android
 
 Android 壳和运行时改动必须以 `UPSTREAM.md` 记录的 dsh-mobile-apk 提交为基线，保留原作者版权和 MIT
 许可。Gateway/UI 的导入文件来自 dsh-Remote，保留 `LICENSES/dsh-remote-MIT.txt`。运行时快照中的
-第三方组件继续遵守各自许可证，声明位于 `app/src/main/assets/licenses/`。
+第三方组件继续遵守各自许可证，声明位于 `app/src/main/assets/licenses/`；Termux GPL 声明和第三方清单
+也会随快照放入 `usr/share/LICENSES/`，包级 `usr/share/doc/<pkg>/copyright*` 在 minimal 裁剪时保留。
 
 任何新增复制代码、资源或依赖，都应在对应文档和许可证声明中说明来源；不要把上游历史文档中的版本号、
 目录结构或构建脚本直接当作本项目当前事实。

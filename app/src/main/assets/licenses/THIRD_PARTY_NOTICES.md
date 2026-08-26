@@ -1,8 +1,9 @@
 # THIRD_PARTY_NOTICES
 
-> 本清单由 `scripts/check-third-party.mjs --write-notices` 从快照 dpkg 清单生成；
-> 与快照一起分发（APK assets/）。每个组件的许可证全文随快照包分发于 `usr/share/doc/<pkg>/copyright`，
-> 标准 GNU 文本副本另见仓库 `LICENSES/`。
+> 本清单对应构建输入快照的 dpkg/Termux 包清单；minimal 裁剪可能移除表中的可选组件，
+> 但不会移除随快照保留的许可证声明。它与 APK assets 和运行时快照一起分发。
+> Termux 包的组件级许可证全文保留在快照的 `usr/share/doc/<pkg>/copyright*`，标准 GNU 文本副本
+> 另见快照 `usr/share/LICENSES/` 和仓库 `app/src/main/assets/licenses/`。
 
 | 组件 | 版本 | 许可证 | 上游源码 |
 |---|---|---|---|
@@ -90,6 +91,6 @@
 ## 源码要约（GPL §3）
 
 上表各 copyleft 组件的对应源码及完整构建脚本，见 <https://github.com/termux/termux-packages>（按版本标签对应）。
-本发行快递包含对上述二进制的再加工：Termux 包的前缀/编译期路径重写（`scripts/fix-shebang.py`、`scripts/inject-snapshot.py`、
-`termux-elf-cleaner` 调用与 `build-snapshot-013.mjs` 中的 RUNPATH/shebang 处理）、快照归档与插件注入（`build-apk-013.ps1`）；
-改写说明与工具随本仓库发布（见 `docs/RELEASE.md` 合规声明）。
+本发行快照包含对 Termux 包的本地前缀/路径适配、快照归档与 DSH profile 注入；minimal 生成脚本为
+`scripts/build-minimal-snapshot.sh`。Termux 上游 GPL 声明见同目录的 `TERMUX-LICENSE.md`，
+对应源代码和构建脚本见 <https://github.com/termux/termux-packages>。
