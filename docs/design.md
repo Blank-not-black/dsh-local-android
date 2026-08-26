@@ -1,131 +1,216 @@
-# 壳 APK 设计（dsh-mobile-apk）
+# DSH for Android 当前技术设计
 
-> 版本 v2.0 ｜ 2026-08-20 ｜ 由 M1 纯壳演进为内嵌快照运行时（M2 保活/自更新/控制台已落地）
+> 状态：当前实现规范。本文描述 `dsh-local-android`，不是上游
+> `dsh-mobile-apk` 的原始设计文档。
 
----
+## 1. 目标与边界
 
-## 1. 形态与边界
+本项目是独立的 Android 本地 DSH 发行版。它以
+[dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk) 的 Android 壳和内嵌运行时为底座，
+再接入 dsh-Remote 的 gateway 与 Web UI。上游基线、复制路径和许可证信息集中记录在
+[`UPSTREAM.md`](../UPSTREAM.md)。
 
-- **内嵌运行时**：随包 `assets/snapshot.tar.xz`（~70MB，node + bash + coreutils + dsh + 插件），
-  首启解压到应用自身目录并启动引擎；完全离线，无需 Termux app；
-- **WebView 消费** `http://127.0.0.1:3080`（快照内 dsh web 服务）；APK 与引擎版本解耦
-  （桥协议版本化 `androidBridge.version`）；
-- **引擎不可达时**：原生启动/测试界面（guide view）——状态、解压/更新进度、崩溃横幅、engine.log 摘要、
-  重试/打开控制台/检查更新；引擎崩溃由看门狗自动恢复；
-- **内置控制台**：`assets/console.html` + 快照内嵌 Termux bash 交互终端（`ConsoleActivity`），
-  引擎未运行也可排查；
-- **零 fork、零侵入**：页面侧不做任何改动；桥能力全部经 `@JavascriptInterface` 注入。
+目标是让用户在 Android 本地完成 DSH 的安装、启动、文件访问和 Web UI 交互，同时保持现有 DSH
+API/WebSocket 协议可复用。第一阶段不追求把 WebView 与后端重写成一套新的 Native Bridge 协议。
 
-## 2. 桥协议 v1（window.androidBridge）
+当前边界：
 
-`version` 返回应用版本号（`BuildConfig.VERSION_NAME`，当前 `0.12.4`）；页面按它做 feature-detect。
-实现见 `AndroidBridge.kt`。
+- Engine、Local Gateway 和 UI 是三个独立运行层；任何一层不得越权管理另一层；
+- 所有网络通信仅走 `127.0.0.1`，不把本地版本作为远程控制服务暴露；
+- Android 壳负责进程、权限、生命周期和系统文件选择；gateway 负责协议代理和 Web UI 资源；
+- 不承诺所有桌面 DSH 插件都能在 Android 运行，插件兼容性需要单独验证；
+- 运行时快照不提交 Git，构建时必须使用与设备 ABI 匹配的快照。
 
-**同步返回**
-
-| 方法 | 签名 | 说明 |
-|---|---|---|
-| version | () → String | 应用版本号 |
-| getSystemDark | () → Boolean | 系统深色模式（绕过厂商 WebView matchMedia 失效，首帧主题用） |
-| checkEngine | () → String | 探测 127.0.0.1:3080，返回 `{running, latencyMs, error?}` JSON |
-| hasAllFilesAccess | () → Boolean | 是否已授予「所有文件访问」 |
-| getPickToken | () → String | 目录选择桥一次性会话 token（引擎侧 pick 端点校验；null = 禁用） |
-| copyText | (text) → Boolean | 写入系统剪贴板（WebView clipboard 被拒的回退） |
-| getDevLogEnabled | () → Boolean | dev 日志开关状态 |
-
-**命令**
-
-| 方法 | 签名 | 说明 |
-|---|---|---|
-| keepScreenOn | (enable) | 屏幕常亮开关 |
-| showNotification | (title, text) | 通知测试通道（POST_NOTIFICATIONS 运行时请求） |
-| pickDirectory | (callbackId) | SAF 目录选择（ACTION_OPEN_DOCUMENT_TREE）；结果异步经 `onDirectoryPicked(callbackId, path)` 回 JS |
-| pickImage | (callbackId) | SAF 图片选择；结果同上异步回传 |
-| setTextZoom | (percent) | WebView 字体缩放 50–200 |
-| setImmersiveMode | (enable) | 沉浸式状态栏开关（true = 状态栏常隐） |
-| downloadDebugLogs | () | 导出引擎日志 + 环境信息（压缩包） |
-| requestAllFilesAccess | () | 打开系统「所有文件访问」授权页 |
-| restartEngine | () | 重启引擎进程（看门狗拉起） |
-| shutdownToGuide | () | 停引擎并回退测试界面（不自动重启） |
-| reloadWebUI | () | 重新加载 Web UI |
-| openConsole | () | 打开内置控制台 |
-| setDevLogEnabled | (enabled) | 设置 dev 日志开关（开启后写入 `dshdata/log/`） |
-
-**路径映射**（`pickDirectory` 回传）：`content://` tree URI → Termux 可见真实路径：
-`primary:rel/path` → `/storage/emulated/0/rel/path`；非 primary 卷退回原样 `content://`。
-路径做 `..` / 绝对路径净化（防逃逸）。
-
-## 3. 权限集
-
-| 权限 | 用途 | 时机 |
-|---|---|---|
-| INTERNET | WebView + checkEngine | 声明 |
-| POST_NOTIFICATIONS | 通知测试通道 | API 33+ 运行时请求 |
-| FOREGROUND_SERVICE + FOREGROUND_SERVICE_DATA_SYNC | 保活前台服务 | 声明 |
-| MANAGE_EXTERNAL_STORAGE | 所有文件访问（外部工作区） | 特殊权限，用户手动授予 |
-
-SAF 目录/图片选择无需权限（用户经系统文件管理器授权 tree URI）。
-
-## 4. 页面结构
+## 2. 四层架构
 
 ```text
-MainActivity
- ├─ onCreate: 解压快照（首次）→ 引擎探测后台线程
- │   ├─ 可达 → WebView 加载 http://127.0.0.1:3080
- │   └─ 不可达 → guideView（品牌区/状态卡/操作区，入场 stagger 动画）
- ├─ WebView 配置: JS 启用 / DOM storage / file chooser / 系统栏避让（CSS 变量注入）
- ├─ AndroidBridge 注入: 20 个 @JavascriptInterface 方法（见 §2）
- ├─ 引擎监控: 3s 轮询（down → 测试界面，up → 恢复 WebUI）
- ├─ 看门狗: EngineService 5s 调度（引擎崩溃自动拉起）
- ├─ 返回键: 先 WebView.canGoBack，否则 finish
- └─ 更新入口: ACTION_UPDATE intent → runUpdate（manifest → 下载 → 校验 → 原子切换）
-
-ConsoleActivity: assets/console.html（快照内嵌 bash 交互终端，输出裁剪 2000 行）
-
-EngineService: 前台服务（keep-alive）+ 看门狗；Shizuku 保活增强（可选）
+┌──────────────────────────────────────────┐
+│ Install / detection                      │
+│ 快照、ABI、迁移、权限、首启状态            │
+└──────────────────┬───────────────────────┘
+                   │ InstallReady
+┌──────────────────▼───────────────────────┐
+│ DSH Engine                               │
+│ dsh web :3080、EngineService、watchdog    │
+└──────────────────┬───────────────────────┘
+                   │ EngineReady
+┌──────────────────▼───────────────────────┐
+│ Local Gateway                            │
+│ dsh-Remote gateway/UI host、API/WS proxy  │
+│ :8787，仅回环                              │
+└──────────────────┬───────────────────────┘
+                   │ GatewayReady
+┌──────────────────▼───────────────────────┐
+│ DSH for Android UI                       │
+│ WebView、用户交互、Android bridge          │
+└──────────────────────────────────────────┘
 ```
 
-## 5. 工程骨架
+### 2.1 安装 / 检测层
+
+入口是 `AndroidInstallBackend`。它负责：
+
+- 检查运行时快照是否存在、完整且与当前 ABI 匹配；
+- 解压或迁移应用私有运行时目录；
+- 准备用户明确授予的文件访问能力；
+- 返回可供 Engine 使用的运行时目录。
+
+该层只准备资源和权限，不启动 Engine 或 Gateway。失败时停留在检测界面，错误归因必须指向安装层。
+
+### 2.2 DSH Engine 层
+
+入口是 `AndroidEngineBackend`，生命周期实现分布在 `EngineManager.kt`、`EngineService.kt`、
+`EngineProbe.kt` 和 `WatchdogV2.kt`。它负责启动：
 
 ```text
-dsh-mobile-apk/                 ← 独立 git 仓库
-├── settings.gradle.kts / build.gradle.kts / gradle.properties
-├── gradle/wrapper/             ← Gradle 8.11.1 wrapper（随仓入库）
-├── keystore/debug.keystore     ← 固定 debug 签名（CI/本地一致，可覆盖安装）
-├── docs/design.md              ← 本文档
-└── app/
-    ├── build.gradle.kts        ← AGP 8.9.x, Kotlin 2.0.x, minSdk 26, targetSdk 34, compileSdk 36
-    │                            applicationId com.dsharnessmobile.shell, versionCode 18, versionName 0.12.4
-    └── src/main/
-        ├── AndroidManifest.xml
-        ├── assets/
-        │   ├── console.html    ← 内置控制台
-        │   ├── patched/        ← 上游 dsh 前端补丁 bundle（linguist-vendored）
-        │   └── snapshot.tar.xz ← 运行时快照（Release 分发，不入库；缺失时构建失败并提示）
-        ├── java/com/dsharnessmobile/shell/
-        │   ├── MainActivity.kt / AndroidBridge.kt / ConsoleActivity.kt / ConsoleSession.kt
-        │   ├── EngineManager.kt / EngineProbe.kt / EngineService.kt
-        │   ├── SnapshotExtractor.kt / UpdateManager.kt / LogCollector.kt / ShizukuSupport.kt
-        └── res/                ← 设计 token（colors/dimens/themes 双态）+ 启动图标
+dsh web --port 3080 --no-open
 ```
 
-## 6. 验证矩阵（设备）
+Engine 只监听 `127.0.0.1:3080`，由前台服务和看门狗负责保活、重启与 `engine.log`。Engine 不感知
+Local Gateway 的实现，也不加载 WebView 页面。
 
-| # | 步骤 | 预期 |
-|---|---|---|
-| V1 | 干净安装（CI 签名 APK） | 安装成功、首启解压、启动无崩溃 |
-| V2 | 引擎在跑时打开 | WebView 显示 dsh 移动 UI（厂商 WebView 已验证） |
-| V3 | 引擎被杀/未启动时打开 | 测试界面显示状态；看门狗 5s 内自动拉起并恢复 WebUI |
-| V4 | SAF pickDirectory / pickImage | 回调收到映射路径 / 图片 URI |
-| V5 | 通知测试 / 控制台 | 通知出现；控制台可执行 bash 命令 |
-| V6 | 深/浅色模式 | 原生界面与控制台均正常（显式文本色，无黑字黑底） |
-| V7 | 返回键 | 先回退页面历史，不误退 |
-| V8 | 快照更新（adb UPDATE action） | 下载→校验→原子切换→新运行时重启，状态写 `files/update-status.txt` |
+嵌入式可执行文件统一经过 `EmbeddedProcess.kt` 启动：优先直接执行，在 Android 对应用私有 ELF
+有限制的环境下回退到 `/system/bin/linker64`。Engine 与 Gateway 使用同一启动基础设施，但使用
+不同的管理器和日志文件。
 
-## 7. 已知限制
+### 2.3 Local Gateway 层
 
-- 应用数据内 ELF 执行限制：targetSdk 34（Android 15+ 禁止 targetSdk 35+ 执行应用数据 ELF，
-  34 保持原生 exec 可用）；
-- Shizuku 保活为 best-effort（能拿到 binder 才生效），无 Shizuku 时退化为前台服务 + 看门狗；
-- 16KB 页构建需在 16KB 设备上产出；APK 按 ABI 分发（内含快照与架构绑定）；
-- `pickImage` 回传的是 SAF URI 字符串，页面侧按 content URI 处理。
+入口是 `LocalGatewayManager.kt`。它将 `gateway/` 下的 gateway、统计模块和 `public/` UI 部署到
+应用私有目录，然后以本地模式启动 `gateway.js`：
+
+```text
+HOST=127.0.0.1
+PORT=8787
+DSH_UPSTREAM=http://127.0.0.1:3080
+DSH_REMOTE_LOCAL=1
+```
+
+Local Gateway 负责：
+
+- 承载 dsh-Remote Web UI；
+- 将 DSH API 和 WebSocket 代理到 Engine；
+- 提供受本地工作区约束的文件接口；
+- 提供 `/health`，供 `GatewayProbe` 判断 UI 是否可以接管；
+- 写入独立的 `gateway.log`。
+
+本地模式会关闭远程服务器、多服务器 Token 配置、网络轮询以及公网公告/更新检查。保留会话、实时消息、
+审批、工作区和统计等 UI 所需能力。网关层不负责启动 DSH Engine，也不直接调用 Android 权限 API。
+
+### 2.4 UI 层
+
+`MainActivity.kt` 在 `GatewayReady` 之后才加载：
+
+```text
+http://127.0.0.1:8787/?local=1
+```
+
+`gateway/public/app.js` 根据 `local=1` 隐藏远程配置和网络相关入口，并连接本地 gateway。UI 只能通过
+现有 Web API 和 `window.androidBridge` 使用后端能力，不得自行拉起 DSH 进程或绕过 gateway 访问内部端口。
+
+## 3. 启动状态机
+
+`BackendSupervisor` 是唯一的启动编排器，顺序固定为：
+
+```text
+INSTALL
+  │ success
+  ▼
+ENGINE ── probe 127.0.0.1:3080 ── success
+  │
+  ▼
+GATEWAY ── probe /health?probe=live ── success
+  │
+  ▼
+UI
+```
+
+失败会产生带有 `BackendStage` 的结果，guide view 根据阶段展示对应日志。重试从失败阶段重新执行，
+而不是让 UI 直接重启全部服务。启动成功后，EngineService/WatchdogV2 只维持 Engine；前台监控会分别
+探测 Engine 和 Gateway，任一层失效时回到 guide view。Gateway 的重新进入仍通过四层启动流程处理，
+不应通过修改 EngineService 把两者重新耦合。
+
+## 4. 进程与数据布局
+
+```text
+MainActivity / WebView
+        │
+        ├── LocalGatewayManager
+        │     └── node gateway.js (:8787)
+        │             └── DSH_UPSTREAM (:3080)
+        │
+        └── EngineService / EngineManager
+              └── embedded node dsh web (:3080)
+```
+
+主要日志和运行时数据均位于应用私有 `filesDir`：
+
+- Engine 日志：`engine.log`；
+- Gateway 日志：`dsh-local-gateway/gateway.log`；
+- 快照解压目录：上游运行时管理器使用的应用私有目录；
+- Gateway 部署目录：`filesDir/dsh-local-gateway`；
+- 本地 gateway 的文件根：由本地运行时工作区和 Android 授权共同约束。
+
+应用重启时不依赖远程服务或公网连接。Gateway 的 token、端口和上游地址由本地启动配置生成，不能把
+dsh-Remote 远程 token 作为 Android 用户配置要求。
+
+## 5. Android 系统边界
+
+- WebView 只访问 loopback gateway；
+- 文件访问优先使用 SAF 选择结果，特殊的 All Files Access 由系统设置页明确授权；
+- 通知、前台服务、屏幕常亮、沉浸式状态栏和调试日志通过 `androidBridge` 暴露；
+- 内置控制台是排障入口，不属于 Engine/Gateway 的通信协议；
+- Manifest 不注册绕过 `BackendSupervisor` 的直接启动路径；
+- `MainActivity` 不在 Gateway 未就绪时加载 Web UI。
+
+## 6. 源码映射
+
+| 责任 | 当前实现 |
+| --- | --- |
+| 四层编排 | `app/src/main/java/com/dshmobile/shell/BackendSupervisor.kt` |
+| 公共进程启动 | `app/src/main/java/com/dshmobile/shell/EmbeddedProcess.kt` |
+| Engine 启动和探测 | `EngineManager.kt`、`EngineService.kt`、`EngineProbe.kt` |
+| Gateway 启动和资源部署 | `LocalGatewayManager.kt` |
+| Gateway 健康检查 | `GatewayProbe.kt` |
+| UI 接管 | `MainActivity.kt`、`gateway/public/app.js` |
+| 本地 gateway 适配 | `gateway/gateway.js`、`gateway/public/index.html` |
+| 分层日志 | `LogCollector.kt`、`engine.log`、`gateway.log` |
+| 本地模式回归测试 | `tests/local-gateway.test.mjs`、`tests/ui-local-mode.test.mjs` |
+
+## 7. 测试门禁
+
+代码变更至少执行与变更层对应的测试：
+
+```sh
+# Kotlin / Android 层
+GRADLE_USER_HOME="$PWD/.gradle-home" JAVA_HOME=/home/blank/Android/jdk21 \
+  ./gradlew testDebugUnitTest --no-daemon
+
+# Gateway / UI 层
+node --test tests/*.test.mjs
+node --check gateway/gateway.js
+node --check gateway/public/app.js
+
+# 所有文本和补丁
+git diff --check
+
+# APK 构建
+GRADLE_USER_HOME="$PWD/.gradle-home" JAVA_HOME=/home/blank/Android/jdk21 \
+  ./gradlew assembleDebug --no-daemon
+```
+
+设备验收顺序：干净安装 → 首启解压 → Engine 健康 → Gateway 健康 → WebView 接管 → 会话/实时消息 →
+SAF 文件访问 → 引擎或 Gateway 单独崩溃恢复。没有连接 Android 设备时，只能报告构建和单元测试结果，
+不能把 APK 构建通过当作真机启动通过。
+
+当前实体手机构建使用 arm64 快照；x86_64 模拟器必须使用同 ABI 快照。`@napi-rs/canvas`、
+`DOMMatrix`、`ImageData` 和 `Path2D` 警告来自 PDF 可选渲染路径，是否影响启动要以 Engine 与 Gateway
+的分层健康检查和日志为准。
+
+## 8. 上游与许可证
+
+Android 壳和运行时改动必须以 `UPSTREAM.md` 记录的 dsh-mobile-apk 提交为基线，保留原作者版权和 MIT
+许可。Gateway/UI 的导入文件来自 dsh-Remote，保留 `LICENSES/dsh-remote-MIT.txt`。运行时快照中的
+第三方组件继续遵守各自许可证，声明位于 `app/src/main/assets/licenses/`。
+
+任何新增复制代码、资源或依赖，都应在对应文档和许可证声明中说明来源；不要把上游历史文档中的版本号、
+目录结构或构建脚本直接当作本项目当前事实。

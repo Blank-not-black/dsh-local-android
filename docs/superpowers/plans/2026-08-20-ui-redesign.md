@@ -1,3 +1,7 @@
+> 文档状态：上游历史 UI 重构记录。当前项目结构、启动协议、构建命令和测试门禁以
+> `AGENTS.md`、`README.zh.md`、`docs/LOCAL_ARCHITECTURE.md` 和 `docs/design.md` 为准。
+> 本文保留用于追溯 dsh-mobile-apk 基于的界面设计演进，不作为当前四层架构的实现规范。
+
 # UI 重构实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

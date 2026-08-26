@@ -54,7 +54,7 @@ Install / detection screen
 
 ### 本地 gateway
 
-`gateway/` 保存 dsh-Remote 的 gateway 和 UI 基线。后续增加 `DSH_REMOTE_LOCAL=1` 本地模式：
+`gateway/` 保存 dsh-Remote 的 gateway 和 UI 基线，当前已通过 `DSH_REMOTE_LOCAL=1` 接入本地模式：
 
 - 上游固定为 `127.0.0.1:3080`；
 - 监听地址固定为 `127.0.0.1`；

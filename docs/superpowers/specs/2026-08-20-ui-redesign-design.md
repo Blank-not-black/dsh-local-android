@@ -1,3 +1,7 @@
+> 文档状态：上游历史 UI 设计资料。当前项目结构、启动协议、构建命令和测试门禁以
+> `AGENTS.md`、`README.zh.md`、`docs/LOCAL_ARCHITECTURE.md` 和 `docs/design.md` 为准。
+> 本文保留用于追溯 dsh-mobile-apk 基于的界面设计演进，不作为当前四层架构的实现规范。
+
 # UI 重构设计 — 简洁 · 优雅 · 现代(Double-Bezel + teal 点缀 + 双主题)
 
 日期:2026-08-20(设计演进:v1「高端极简」→ v2「简洁优雅现代」,已实现并合入 PR #61)

@@ -1,154 +1,137 @@
-# dsh-local-android — DeepSeek Harness 安卓本地版
+# DSH for Android
 
-![DeepSeek Harness](https://img.shields.io/badge/DeepSeek_Harness-blue?style=flat&logo=DeepSeek&logoSize=auto&color=%232D5F9E)
-![Android](https://img.shields.io/badge/Android-blue?style=flat&logo=Android&logoSize=auto&color=%2397CA00)
+DeepSeek Harness（DSH）的独立 Android 本地版：在手机本地运行 DSH，并使用
+dsh-Remote 的界面进行交互。
 
+本仓库明确基于两个上游内容开发：
 
-> 独立的 Android 本地版：基于 [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk) 的运行时和 Android 壳，叠加 dsh-Remote gateway 与移动端 UI。
+- Android 壳、内嵌运行时生命周期、快照解压、SAF 文件访问、前台服务、看门狗和原生桥，基于
+  [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk)。固定基线、复制文件和许可证说明见
+  [UPSTREAM.md](UPSTREAM.md)。
+- 本地 gateway 和 Web UI 来自
+  [dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)，并针对 Android 回环运行方式做了适配。
 
-> ⚠️ **这是预览版（0.13.0-preview）**：不稳定，用于社区验证与反馈，不建议当作生产依赖。
-> - **ADB 未完成**：配对 / 端口自动扫描 / 执行为预览界面——真实 ADB 通道开发中，0.13.0 正式版完成。
-> - **插件市场适配警示**：内置市场牵涉大量第三方插件，**绝大多数插件在手机端不一定可用、大概率有 bug**（移动端与桌面端在 WebView 内核/文件系统/权限模型/运行环境差异大）；移动端适配是长期工程，beta 阶段以「可用性验证与反馈」为主，暂不建议当作生产依赖。插件报错请到 [issues](https://github.com/kelai141/dsh-mobile-apk/issues) 反馈（附机型/版本/复现步骤）。
+本项目不是任一上游项目的官方发行版。Android 运行时的改动应能追溯到
+dsh-mobile-apk 基线；gateway 和 UI 的改动应能追溯到 dsh-Remote。开始开发前请先阅读
+[AGENTS.md](AGENTS.md)。
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Android 本地版：WebView 加载
-dsh-Remote UI，通过 `127.0.0.1:8787` 的本地 gateway 代理内嵌 DSH Web（`127.0.0.1:3080`）。
-Android 壳继续复用上游运行时、SAF 目录桥、保活前台服务、看门狗和更新基础。整体边界见
-[docs/LOCAL_ARCHITECTURE.md](docs/LOCAL_ARCHITECTURE.md)。
+## 当前架构
 
-## 功能
+启动流程严格分为四层：
 
-- **内嵌运行时**：xz 快照（arm64 151.6MB / x86_64 158.9MB）内置 node + git + bash + coreutils +
-  dsh + 插件 + pnpm + python/perl/ruby；首启解压 2-4 分钟（`refreshSnapshot`），引擎监听
-  `127.0.0.1:3080`；完全离线；
-- **文件直达会话（F5）**：「使用其他应用打开 / 分享」→ 自动跳转本应用 → 强制新建临时工作区会话
-  处理文件；临时工作区 7 天 TTL 自动清理 + 工作区面板可见（issue #60）；
-- **搜索（grep/glob）**：移动端 ripgrep 平台包（android-arm64，pcre2/NEON 全特性）；
-- **通知提醒**：任务完成自动通知（引擎事件桥 + 看门狗消费）；授权请求等系统通知链；
-- **移动 UI**：响应式插件（手机端抽屉/sheet）；可调字体、沉浸式状态栏、深色主题；
-- **内置控制台**：独立 bash 交互终端（`assets/console.html` + 内嵌 Termux），引擎未运行也可排查；
-- **保活**：前台服务 + 5 秒看门狗（自动重拉挂死引擎）+ 3 秒 UI 轮询 + 崩溃自动回退闸门（UndoGate）；
-- **在线运行时更新**：manifest 驱动的快照替换（下载 → sha256 → 原子切换 → 自动重启），
-  运行时可自更新而无需更新 APK；
-- **SAF 桥**：`pickDirectory` 把所选目录映射为真实路径（`/storage/emulated/0/…`）；
-- **设备访问**：所有文件访问；Shizuku 探活示例；
-- **ADB 授权界面（预览）**：三道门授权状态机 + 配对端口自动扫描（真实 ADB 通道开发中，
-  0.13.0 正式版完成）。
-
-## 下载 / 安装
-
-Release `v0.13.0-preview` 提供双 ABI 包：
-
-| APK | 适用 |
-|---|---|
-| `dsh-mobile-apk-v0.13.0-preview-arm64.apk` | arm64 设备（真机） |
-| `dsh-mobile-apk-v0.13.0-preview-x86_64.apk` | x86_64 模拟器 / 设备 |
-
-```sh
-adb install -r -t <apk>    # 同签名覆盖安装
+```text
+安装 / 检测层
+      │
+      ▼
+DSH Engine  ── http://127.0.0.1:3080
+      │
+      ▼
+Local Gateway ── http://127.0.0.1:8787
+      │
+      ▼
+DSH for Android UI（WebView）
 ```
 
-**ABI 必须与设备匹配。** ABI 不匹配会导致引擎启动即崩——node ELF `EM_X86_64` vs `EM_AARCH64`。
-真机选 arm64 包，模拟器选 x86_64 包。
+`BackendSupervisor` 只负责顺序、就绪检查和失败归因，各层职责如下：
+
+1. 安装 / 检测层：校验 ABI、准备运行时快照、处理解压迁移和 Android 权限。
+2. DSH Engine 层：启动 `dsh web`，负责引擎进程、前台服务、看门狗和 `engine.log`。
+3. Local Gateway 层：承载 dsh-Remote UI，代理 DSH API/WebSocket，并提供本地文件接口；只监听
+   回环地址，写入 `gateway.log`。
+4. UI 层：只有 gateway 健康检查成功后才加载 WebView，不直接启动或管理后端进程。
+
+Engine 与 gateway 之间保留回环 HTTP/WebSocket，是为了复用现有 DSH 协议。由于运行范围是本机，
+远程服务器列表、Token 配对、网络轮询和公网公告/更新检查在本地模式中关闭，不属于 Android 本地运行时契约。
+
+## 仓库结构
+
+```text
+dsh-local-android/
+├── app/
+│   └── src/main/
+│       ├── java/com/dshmobile/shell/
+│       │   ├── BackendSupervisor.kt       # 四层启动协调器
+│       │   ├── EmbeddedProcess.kt         # Android ELF / linker 启动辅助
+│       │   ├── EngineManager.kt            # DSH 引擎生命周期
+│       │   ├── EngineService.kt            # 引擎前台服务和看门狗
+│       │   ├── LocalGatewayManager.kt      # 本地 gateway 生命周期和资源部署
+│       │   ├── MainActivity.kt              # 检测界面和 WebView 接管
+│       │   ├── GatewayProbe.kt              # 127.0.0.1:8787 健康检查
+│       │   └── ...                          # 上游壳层与 Android 桥
+│       └── assets/                          # 运行时快照和许可证
+├── gateway/
+│   ├── gateway.js                          # dsh-Remote gateway，本地模式
+│   ├── gateway-stats.cjs
+│   └── public/                             # dsh-Remote UI 快照
+├── tests/
+│   ├── local-gateway.test.mjs
+│   └── ui-local-mode.test.mjs
+├── docs/LOCAL_ARCHITECTURE.md               # 当前架构契约
+├── docs/design.md                           # 当前技术设计
+├── UPSTREAM.md                              # 上游基线和署名说明
+└── AGENTS.md                                # 开发规则和测试门禁
+```
 
 ## 构建
 
-要求：JDK 17+、包含 API 36 的 Android SDK，以及与目标设备 ABI 匹配的运行时快照。快照不提交进
-Git，需要从上游 Release 下载，并与 `app/src/main/assets/snapshot.sha256` 校验。
+当前工程编译使用 Android API 36，运行目标为 API 34；本地 Gradle 使用 JDK 21。运行时快照较大，
+不提交到 Git，构建前请将匹配的快照放到
+`app/src/main/assets/snapshot.tar.xz`。
 
-当前开发 pin 为面向实体手机的 arm64 快照。若使用 x86_64 模拟器，构建前需要换成上游匹配的
-x86_64 快照和哈希。
+当前面向实体手机的开发构建固定使用 arm64 快照。x86_64 模拟器必须替换成 x86_64 快照及其哈希，
+不能混用不同 ABI 的 Node/运行时。
 
-```powershell
-# 使用本地已下载并校验的快照构建：
-GRADLE_USER_HOME="$PWD/.gradle-home" ./gradlew assembleDebug
-# 产物：app/build/outputs/apk/debug/app-debug.apk
+```sh
+export JAVA_HOME=/home/blank/Android/jdk21
+export GRADLE_USER_HOME="$PWD/.gradle-home"
+
+./gradlew testDebugUnitTest --no-daemon
+node --test tests/*.test.mjs
+node --check gateway/gateway.js
+node --check gateway/public/app.js
+./gradlew assembleDebug --no-daemon
 ```
 
-门禁（`build-apk-013.ps1` 内）：第三方合规（`check-third-party.mjs`，GPL 义务）/ 🔒机密 /
-ELF / cordis 挂载集⊇注入集 / LICENSES 自检（Python 流式）——任一不过即拒打包。
+APK 产物：
 
-## 桥协议 v1（`window.androidBridge`）
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
-应用名 `DSH for Android`、包名 `com.dsharnessmobile.shell`。
-`androidBridge.version` 返回应用版本号（当前 `0.13.0-preview`，versionCode 24），
-页面按它做 feature-detect。下列 ADB 方法为预览授权面——真实通道在 0.13.0 正式版完成。
+当前快照构建应使用 arm64 真机验证；arm64 内嵌 Node 运行时不能在 x86_64 模拟器上运行。
 
-**同步返回**
+## 分层诊断
 
-| 方法 | 签名 | 说明 |
-|---|---|---|
-| `version` | () → string | 应用版本号（`0.13.0-preview`），feature-detect 用 |
-| `getSystemDark` | () → boolean | 系统深色模式（绕过部分厂商 WebView `matchMedia` 失效，首帧主题用） |
-| `checkEngine` | () → string | 探测 127.0.0.1:3080；JSON `{running, latencyMs, error?}` |
-| `hasAllFilesAccess` | () → boolean | 是否已授予「所有文件访问」权限（外部工作区要求） |
-| `getPickToken` | () → string | 目录选择桥的一次性会话 token（引擎侧 pick 端点校验） |
-| `copyText` | (text) → boolean | 写入系统剪贴板（WebView `clipboard.writeText` 被拒时的回退） |
-| `getDevLogEnabled` | () → boolean | dev 日志开关状态 |
-| `getAdbState` | () → string | ADB 授权状态视图（三道门状态机）：JSON `{fullAccess, allowSwitch, paired, wirelessDebugOn, message}`（预览） |
-| `discoverAdbPorts` | () → string | 无线调试端口自动扫描（原生 TCP 盲扫）：配对端口候选 JSONArray；无线调试未开时返回 `[]`（预览） |
-| `setAdbPair` | (code, pairPort, connectPort) → boolean | 门3 配对：真执行 `adb pair` 握手；码值只进 argv，不入审计（预览） |
-| `adbShell` | (cmd) → string | ADB shell 执行原语：JSON `{ok, stdout?, stderr?, guidance?}`；未授权 fail-closed（预览） |
+应用按层显示启动失败，不把所有问题合并成一个笼统错误。控制台可分别查看：
 
-**命令**
+- `engine.log`：运行时解压、内嵌 Node 和 `dsh web` 启动日志；
+- `gateway.log`：本地 gateway 启动、上游探测和 gateway 请求日志。
 
-| 方法 | 签名 | 说明 |
-|---|---|---|
-| `keepScreenOn` | (enable) | 屏幕常亮开关 |
-| `showNotification` | (title, text) | 通知测试通道（POST_NOTIFICATIONS） |
-| `pickDirectory` | (callbackId) | SAF 目录选择；结果经 `window.__dshBridge.onDirectoryPicked(callbackId, path)` 异步回传 |
-| `pickImage` | (callbackId) | SAF 图片选择；结果同上异步回传 |
-| `setTextZoom` | (percent) | WebView 字体缩放（50–200，设置页滑杆） |
-| `setImmersiveMode` | (enable) | 沉浸式状态栏开关（true = 状态栏常隐） |
-| `downloadDebugLogs` | () | 导出引擎日志 + 环境信息（压缩包，走系统分享/下载） |
-| `requestAllFilesAccess` | () | 打开系统「所有文件访问」授权页（特殊权限） |
-| `restartEngine` | () | 重启引擎进程（EngineService 看门狗拉起） |
-| `shutdownToGuide` | () | 停引擎并回退到测试界面（不自动重启） |
-| `reloadWebUI` | () | 重新加载 Web UI |
-| `openConsole` | () | 打开内置控制台 |
-| `setDevLogEnabled` | (enabled) | 设置 dev 日志开关（开启后日志写入 `dshdata/log/`） |
-| `setAdbAllow` | (enable) | 门2「允许访问」开关（默认关；关闭即通道失败关闭）（预览） |
-| `revokeAdbPair` | () | 回收配对（disconnect + 删 adbkey + 清状态；配套审计）（预览） |
+下面的警告通常不会导致引擎启动失败：
 
-桥协议让 APK 与 dsh 版本解耦：页面按 `androidBridge.version` 做特性检测。
+```text
+Cannot load "@napi-rs/canvas" package
+Cannot polyfill DOMMatrix / ImageData / Path2D
+```
 
-## 在线更新协议
+它来自 `pdfjs-dist` 的可选 PDF 渲染能力。Engine 失败与 gateway 失败是两个独立问题，应先查看对应日志，
+再决定是否需要修改依赖。正常端点为：
 
-1. App 拉取 `manifest.json`：`{url, sha256, size}`（默认 `http://10.0.2.2:8899/manifest.json`
-   供模拟器测试；生产指向发布服务器）；
-2. 下载快照 → 校验 SHA-256 → 解压到 staging（不碰线上目录）→ 原子切换 `usr` → 杀掉旧引擎 →
-   看门狗用新运行时重启。
+```text
+DSH Engine：    http://127.0.0.1:3080
+Local Gateway： http://127.0.0.1:8787/health?probe=live
+```
 
-测试触发：`adb shell am start -n com.dsharnessmobile.shell/.MainActivity -a com.dsharnessmobile.shell.action.UPDATE`；
-状态写入 `files/update-status.txt`。测试服务器：本地起 HTTP 服务提供 `manifest.json` 与快照文件
-（默认指向 `http://10.0.2.2:8899/manifest.json`，模拟器映射宿主机）。
+## 权限与本地文件
 
-## 权限
+Android 壳保留上游 SAF 桥，通过系统文件选择器获得目录或文件访问能力。文件访问必须遵循 Android 授予的
+URI 或用户明确选择的本地工作区；本地 gateway 不能因为运行在回环地址就扩大为无约束的设备文件访问。
 
-| 权限 | 用途 |
-|---|---|
-| `INTERNET` | WebView + 引擎探测 |
-| `POST_NOTIFICATIONS` | 通知通道（API 33+ 运行时请求） |
-| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` | 保活前台服务 |
-| `MANAGE_EXTERNAL_STORAGE` | 「所有文件访问」（外部工作区要求；特殊权限，用户手动授予） |
+## 许可证与署名
 
-SAF 目录/图片选择无需权限。
+本仓库使用 MIT 许可证。源自 dsh-mobile-apk 的 Android 壳和运行时保留上游版权及 MIT 声明；导入的
+dsh-Remote gateway/UI 在 `LICENSES/dsh-remote-MIT.txt` 中保留其 MIT 声明；其他运行时组件的许可证位于
+`app/src/main/assets/licenses/`。
 
-## ABI 与页大小
-
-arm64 与 x86_64 均已端到端验证；APK 按 ABI 分发（快照内嵌架构相关）。16KB 页构建需在
-16KB 设备上产出（见 docs/design.md §ABI）。
-
-## License
-
-MIT。第三方组件按各自许可（见依赖声明）。GPL 合规：copyleft 全文三形态在场——快照
-`usr/share/LICENSES/`、仓库 `LICENSES/`、APK `assets/licenses/`。设计文档：`docs/design.md`。
-
-## 致谢与邀请
-
-**感谢全体社区成员的反馈与贡献！** 特别致谢：cdwlll（环境问题反馈）、haitunlang（MIUI12 兼容）、
-TACONailoong（老 WebView 兼容方案）、X-SCI-TECH（PR 贡献）、Yangerwei（文件竞态反馈）、
-gr12-cmd（armv7l 需求）。
-
-**诚邀各位开发者参与**：欢迎提交 issue、PR、建议与改进。我们特别需要：Android 兼容性测试
-（华为/荣耀/小米等定制 WebView）、armv7l 等更多机型支持、ADB 通道完善、插件生态扩展。
-开发维护规范见各仓库 `AGENTS.md`（开发地图）。
+具体的上游提交基线、复制路径和署名规则以
+[UPSTREAM.md](UPSTREAM.md) 为准。
