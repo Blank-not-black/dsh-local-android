@@ -113,12 +113,16 @@ http://127.0.0.1:8787/?local=1
 
 ### 2.5 Minimal profile 与可选能力
 
-`runtime/minimal/cordis.patch.yml` 是默认 profile 的唯一基线，当前只插入：
+`runtime/minimal/cordis.patch.yml` 是默认 profile 的唯一基线。它关闭基础 bundle 中会与 Android 适配层冲突的
+四个入口，再启用：
 
 - `@dsh-android/dsh-shell-termux`；
 - `@dsh-android/dsh-host-web-compat`；
 - `@dsh-android/dsh-client-ui-responsive`；
 - DSH 默认模型和系统目录选择入口。
+
+这四个关闭项（`bash-sandbox`、`ui-layout`、`agent-default-model`、`directory-picker`）不是可选能力，不能
+在 minimal 裁剪时删除；它们用于避免重复注册和保持本地目录选择的单一实现。
 
 完整快照通过 `scripts/build-minimal-snapshot.sh` 生成 minimal 快照。脚本同时移除编译器/链接器、
 Python/Perl/Ruby、npm/pnpm、ADB/device image 工具、编辑器/网络诊断以及 profile 中的附件、OCR、

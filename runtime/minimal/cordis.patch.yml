@@ -1,6 +1,14 @@
 # Minimal Android profile.
 # Keep this list intentionally small; optional integrations are shipped as
 # separate capability packs in later versions.
+- id: bash-sandbox
+  disabled: true
+- id: ui-layout
+  disabled: true
+- id: agent-default-model
+  disabled: true
+- id: directory-picker
+  disabled: true
 - insert:
     - id: shell-termux
       name: '@dsh-android/dsh-shell-termux'

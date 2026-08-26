@@ -22,6 +22,10 @@ test('minimal profile contains only the default Android boot surface', async () 
     assert.match(profile, new RegExp(required.replaceAll('/', '\\/')))
   }
 
+  for (const disabled of ['bash-sandbox', 'ui-layout', 'agent-default-model', 'directory-picker']) {
+    assert.match(profile, new RegExp(`id: ${disabled}\\n  disabled: true`))
+  }
+
   for (const optional of [
     'dsh-android-bridge',
     'dsh-android-file-open',

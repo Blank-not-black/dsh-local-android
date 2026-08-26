@@ -168,3 +168,4 @@ minimal 快照和哈希，不能混用。完整快照不随仓库提交；需要
 | 2026-08-26 | 0.1.2-local | 修复 Local Gateway 的 linker64 回退，统一 Engine/Gateway 嵌入式 Node 启动语义。 |
 | 2026-08-26 | 0.1.3-local | 文档口径切换为 dsh-local-android：明确上游基础、四层结构、测试和设备验证边界。 |
 | 2026-08-26 | 0.1.4-local | 增加可重复的 arm64 minimal 快照裁剪，默认 profile 与可选 capability pack 边界明确。 |
+| 2026-08-26 | 0.1.5-local | 保留 minimal profile 的四个基础冲突禁用项，完成 Waydroid x86_64 端到端启动验证。 |
