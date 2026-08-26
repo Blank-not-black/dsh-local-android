@@ -1,0 +1,27 @@
+# Minimal Android profile.
+# Keep this list intentionally small; optional integrations are shipped as
+# separate capability packs in later versions.
+- insert:
+    - id: shell-termux
+      name: '@dsh-android/dsh-shell-termux'
+      config:
+        bashPath: /data/data/com.dsharnessmobile.shell/files/usr/bin/bash
+        prefix: /data/data/com.dsharnessmobile.shell/files/usr
+        home: /data/data/com.dsharnessmobile.shell/files/home
+        cwd: /data/data/com.dsharnessmobile.shell/files/home
+        timeoutMs: 120000
+        maxTimeoutMs: 600000
+        writeMode: workspace-write
+        workspaceRoot: /data/data/com.dsharnessmobile.shell/files/home/.dsh/workspaces
+        sharedDirs: []
+    - id: host-web-compat
+      name: '@dsh-android/dsh-host-web-compat'
+    - id: ui-responsive
+      name: '@dsh-android/dsh-client-ui-responsive'
+    - id: agent-default-model-mobile
+      name: '@deepseek-ai/dsh-agent-default-model'
+      config:
+        provider: opencode-go
+        model: deepseek-v4-flash
+    - id: picker-native-surface
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-native'

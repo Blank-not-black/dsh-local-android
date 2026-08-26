@@ -80,7 +80,7 @@ tasks.whenTaskAdded {
       if (!snap.exists()) {
         throw GradleException(
           "缺少运行时快照 assets/snapshot.tar.xz —— " +
-            "从 GitHub Releases 下载 snapshot-x86_64.tar.xz 后放到 app/src/main/assets/snapshot.tar.xz（见 README.md）",
+            "从 GitHub Releases 下载与设备 ABI 匹配的 minimal snapshot 后放到 app/src/main/assets/snapshot.tar.xz（见 README.md）",
         )
       }
     }

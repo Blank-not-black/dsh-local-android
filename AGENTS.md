@@ -36,6 +36,12 @@ DSH for Android UI（WebView）
 
 `BackendSupervisor` 只负责按 INSTALL → ENGINE → GATEWAY → UI 顺序协调和归因失败。
 
+默认运行时是 minimal profile：只保留 DSH shell、Web 兼容层、响应式 UI、默认模型和系统目录选择。
+编译器/链接器、Python/Perl/Ruby、npm/pnpm、ADB 管理、编辑器、OCR/PDF/Office、市场、撤销和外部文件
+打开属于后续 capability pack，不得作为默认启动依赖。裁剪脚本和 profile 基线分别位于
+`scripts/build-minimal-snapshot.sh` 与 `runtime/minimal/cordis.patch.yml`。
+可选能力包的依赖、许可证、体积和测试要求见 `docs/OPTIONAL_COMPONENTS.md`。
+
 ## 2. 目录与职责
 
 ```text
@@ -62,6 +68,7 @@ gateway/
 tests/
   local-gateway.test.mjs       gateway 本地模式、健康、鉴权测试
   ui-local-mode.test.mjs       UI 本地模式静态契约测试
+  minimal-profile.test.mjs     minimal profile 静态边界测试
 
 app/src/test/
   .../BackendSupervisorTest.kt 安装、Engine、Gateway、UI handoff 测试
@@ -106,8 +113,10 @@ JAVA_HOME=/home/blank/Android/jdk21 \
 
 Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。
 
-当前仓库 pin 的快照是实体手机用 arm64 版本，`app/src/main/assets/snapshot.tar.xz` 被 `.gitignore` 忽略，
-其哈希记录在 `app/src/main/assets/snapshot.sha256`。x86_64 模拟器必须换用匹配的快照和哈希，不能混用。
+当前仓库 pin 的快照是实体手机用 arm64 minimal 版本，`app/src/main/assets/snapshot.tar.xz` 被
+`.gitignore` 忽略，其哈希记录在 `app/src/main/assets/snapshot.sha256`。x86_64 模拟器必须换用匹配的
+minimal 快照和哈希，不能混用。完整快照不随仓库提交；需要增补 capability pack 时，以完整快照作为输入
+重新裁剪，不直接修改已生成的 minimal 产物。
 
 本地机器的 `local.properties`、`.gradle-home/`、`app/build/` 和快照不提交。
 
@@ -136,7 +145,7 @@ Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。
 - DSH Engine 输出：`filesDir/engine.log`，启动页显示标签 `[dsh-engine]`；
 - Local Gateway 输出：`filesDir/dsh-local-gateway/gateway.log`，启动页显示标签 `[local-gateway]`；
 - Android 壳和生命周期事件：由 `LogCollector` 按天写入诊断日志；
-- `@napi-rs/canvas`、`DOMMatrix`、`ImageData`、`Path2D` 属于 PDF.js 运行时警告，除非 Engine 进程退出，不能直接判定为启动失败；
+- 若启用 PDF 可选包，`@napi-rs/canvas`、`DOMMatrix`、`ImageData`、`Path2D` 属于 PDF.js 运行时警告，除非 Engine 进程退出，不能直接判定为启动失败；默认 minimal 快照不加载该路径；
 - Gateway 启动失败必须优先检查 `gateway.log`，再检查 Engine 是否真的监听 3080。
 
 诊断导出不得包含 API Key、Token、凭据文件或不必要的完整会话内容。
@@ -158,3 +167,4 @@ Debug APK：`app/build/outputs/apk/debug/app-debug.apk`。
 | 2026-08-26 | 0.1.1-local | 增加 BackendSupervisor 四层启动契约、分层日志和对应测试。 |
 | 2026-08-26 | 0.1.2-local | 修复 Local Gateway 的 linker64 回退，统一 Engine/Gateway 嵌入式 Node 启动语义。 |
 | 2026-08-26 | 0.1.3-local | 文档口径切换为 dsh-local-android：明确上游基础、四层结构、测试和设备验证边界。 |
+| 2026-08-26 | 0.1.4-local | 增加可重复的 arm64 minimal 快照裁剪，默认 profile 与可选 capability pack 边界明确。 |

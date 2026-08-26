@@ -21,6 +21,10 @@ API/WebSocket 协议可复用。第一阶段不追求把 WebView 与后端重写
 - 不承诺所有桌面 DSH 插件都能在 Android 运行，插件兼容性需要单独验证；
 - 运行时快照不提交 Git，构建时必须使用与设备 ABI 匹配的快照。
 
+默认交付的是 minimal profile。它只包含 DSH 后台启动、终端命令执行、Web 兼容、响应式 UI、默认模型
+和系统目录选择所需的运行时内容。编译工具链、脚本语言、包管理器、ADB、编辑器、附件格式/OCR、市场、
+撤销和外部文件打开等内容作为后续 capability pack 处理，不进入基础四层的启动条件。
+
 ## 2. 四层架构
 
 ```text
@@ -106,6 +110,24 @@ http://127.0.0.1:8787/?local=1
 
 `gateway/public/app.js` 根据 `local=1` 隐藏远程配置和网络相关入口，并连接本地 gateway。UI 只能通过
 现有 Web API 和 `window.androidBridge` 使用后端能力，不得自行拉起 DSH 进程或绕过 gateway 访问内部端口。
+
+### 2.5 Minimal profile 与可选能力
+
+`runtime/minimal/cordis.patch.yml` 是默认 profile 的唯一基线，当前只插入：
+
+- `@dsh-android/dsh-shell-termux`；
+- `@dsh-android/dsh-host-web-compat`；
+- `@dsh-android/dsh-client-ui-responsive`；
+- DSH 默认模型和系统目录选择入口。
+
+完整快照通过 `scripts/build-minimal-snapshot.sh` 生成 minimal 快照。脚本同时移除编译器/链接器、
+Python/Perl/Ruby、npm/pnpm、ADB/device image 工具、编辑器/网络诊断以及 profile 中的附件、OCR、
+市场、撤销、Android 管理等插件。脚本保留 Node、bash、核心文件工具、TLS/HTTP 所需内容和 DSH 全局
+模块；不要通过删除基础运行库来进一步追求体积。
+
+可选 pack 必须满足三条规则：只能在安装/升级阶段叠加，不能改变 INSTALL → ENGINE → GATEWAY → UI
+顺序；自身依赖与许可证必须单独登记；必须有静态边界测试和启用后的运行测试。这样删除可选能力不会让
+基础 DSH 后台失去启动能力。具体能力包清单见 [`OPTIONAL_COMPONENTS.md`](OPTIONAL_COMPONENTS.md)。
 
 ## 3. 启动状态机
 
@@ -202,9 +224,9 @@ GRADLE_USER_HOME="$PWD/.gradle-home" JAVA_HOME=/home/blank/Android/jdk21 \
 SAF 文件访问 → 引擎或 Gateway 单独崩溃恢复。没有连接 Android 设备时，只能报告构建和单元测试结果，
 不能把 APK 构建通过当作真机启动通过。
 
-当前实体手机构建使用 arm64 快照；x86_64 模拟器必须使用同 ABI 快照。`@napi-rs/canvas`、
-`DOMMatrix`、`ImageData` 和 `Path2D` 警告来自 PDF 可选渲染路径，是否影响启动要以 Engine 与 Gateway
-的分层健康检查和日志为准。
+当前实体手机构建使用 arm64 minimal 快照；x86_64 模拟器必须使用同 ABI 的 minimal 快照。默认快照不
+加载 PDF.js；如果启用附件 pack，`@napi-rs/canvas`、`DOMMatrix`、`ImageData` 和 `Path2D` 警告仍然
+只代表可选渲染路径，是否影响启动要以 Engine 与 Gateway 的分层健康检查和日志为准。
 
 ## 8. 上游与许可证
 

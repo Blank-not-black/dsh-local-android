@@ -3,20 +3,25 @@
 An independent Android edition of DeepSeek Harness (DSH), designed to run DSH
 locally on an Android device and present it through the dsh-Remote interface.
 
-This repository is intentionally built from two upstream bases:
+## Upstream foundation and our changes
+
+The upstream projects are implementation foundations, not the product contract
+of this repository:
 
 - The Android shell, embedded runtime lifecycle, snapshot extraction, SAF
   integration, foreground service, watchdog, and native bridge are based on
   [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk). The pinned
   baseline and copied files are recorded in [UPSTREAM.md](UPSTREAM.md).
-- The local gateway and Web UI are imported from
-  [dsh-Remote](https://github.com/Blank-not-black/dsh-Remote) and adapted for
-  loopback-only Android use.
+- The local gateway and Web UI are based on
+  [dsh-Remote](https://github.com/Blank-not-black/dsh-Remote).
 
-The project is not an official release of either upstream project. Changes to
-the Android runtime should remain traceable to the dsh-mobile-apk baseline;
-changes to the gateway and UI should remain traceable to dsh-Remote. See
-[AGENTS.md](AGENTS.md) before changing code.
+Our changes are the product itself: four separately owned layers for install
+detection, DSH Engine, Local Gateway, and WebView UI; loopback-only Engine to
+gateway traffic; removal of remote token/polling/update paths; Android system
+file selection; and a minimal default runtime with later capabilities delivered
+as optional packs. The pinned baseline, copied paths, and licenses are in
+[UPSTREAM.md](UPSTREAM.md). This is not an official release of either upstream
+project. See [AGENTS.md](AGENTS.md) before changing code.
 
 ## Current architecture
 
@@ -53,6 +58,22 @@ keeps the existing DSH protocol reusable. Remote server lists, token pairing,
 network polling, and public announcement/update checks are disabled in local
 mode; they are not part of the Android local runtime contract.
 
+### Minimal default runtime and optional capabilities
+
+The APK currently embeds an arm64 minimal snapshot. The default profile loads
+only the shell, web compatibility layer, responsive UI, default model
+configuration, and native directory-picker surface needed to boot DSH and our
+UI. Compilers/linkers, Python/Perl/Ruby, npm/pnpm, ADB management, editors,
+OCR/PDF/Office, marketplace, undo, and external-file-open integrations are not
+part of the default boot chain.
+
+`scripts/build-minimal-snapshot.sh` reproducibly generates the minimal snapshot
+from a full snapshot, using `runtime/minimal/cordis.patch.yml` as the profile
+baseline. Future optional capabilities must declare their dependencies,
+licenses, size impact, and tests without changing the four-layer startup order.
+See [`docs/OPTIONAL_COMPONENTS.md`](docs/OPTIONAL_COMPONENTS.md) for the pack
+boundary.
+
 ## Repository layout
 
 ```text
@@ -75,9 +96,15 @@ dsh-local-android/
 │   └── public/                             # dsh-Remote UI snapshot
 ├── tests/
 │   ├── local-gateway.test.mjs
-│   └── ui-local-mode.test.mjs
+│   ├── ui-local-mode.test.mjs
+│   └── minimal-profile.test.mjs
+├── runtime/minimal/
+│   └── cordis.patch.yml                   # default minimal profile
+├── scripts/
+│   └── build-minimal-snapshot.sh           # reproducible snapshot trim
 ├── docs/LOCAL_ARCHITECTURE.md               # current architecture contract
 ├── docs/design.md                           # current technical design
+├── docs/OPTIONAL_COMPONENTS.md              # optional capability-pack boundary
 ├── UPSTREAM.md                              # source baseline and attribution
 └── AGENTS.md                                # development rules and test gate
 ```
@@ -89,8 +116,10 @@ The project currently targets Android API 34 at runtime and compiles with API
 is large and is intentionally not committed to Git; place the matching
 snapshot at `app/src/main/assets/snapshot.tar.xz` before building.
 
-The current phone build is pinned to an arm64 snapshot. An x86_64 emulator
-requires an x86_64 snapshot and matching hash; do not mix runtime ABIs.
+The current phone build is pinned to an arm64 minimal snapshot. An x86_64
+emulator requires an x86_64 minimal snapshot and matching hash; do not mix
+runtime ABIs. The snapshot itself is not committed; its hash is recorded in
+`app/src/main/assets/snapshot.sha256`.
 
 ```sh
 export JAVA_HOME=/home/blank/Android/jdk21
@@ -120,16 +149,18 @@ startup error. The guide screen can expose the separate backend logs:
 - `engine.log`: runtime extraction, embedded Node, and `dsh web` startup;
 - `gateway.log`: local gateway startup, upstream probe, and gateway requests.
 
-The engine warning below is normally non-fatal:
+If the optional attachment-format pack is enabled, the warning below is
+normally non-fatal:
 
 ```text
 Cannot load "@napi-rs/canvas" package
 Cannot polyfill DOMMatrix / ImageData / Path2D
 ```
 
-It comes from optional PDF rendering support in `pdfjs-dist`. The local gateway
-failure and engine failure are separate conditions; inspect the corresponding
-log before changing dependencies. The expected endpoints are:
+It comes from optional PDF rendering support in `pdfjs-dist`. The minimal
+snapshot does not load that path, so the warning should not normally appear.
+The local gateway failure and engine failure are separate conditions; inspect
+the corresponding log before changing dependencies. The expected endpoints are:
 
 ```text
 DSH Engine:    http://127.0.0.1:3080

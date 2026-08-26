@@ -3,17 +3,18 @@
 DeepSeek Harness（DSH）的独立 Android 本地版：在手机本地运行 DSH，并使用
 dsh-Remote 的界面进行交互。
 
-本仓库明确基于两个上游内容开发：
+## 上游基础与本项目改动
 
-- Android 壳、内嵌运行时生命周期、快照解压、SAF 文件访问、前台服务、看门狗和原生桥，基于
-  [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk)。固定基线、复制文件和许可证说明见
-  [UPSTREAM.md](UPSTREAM.md)。
-- 本地 gateway 和 Web UI 来自
-  [dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)，并针对 Android 回环运行方式做了适配。
+本仓库只把上游作为实现底座，不把上游项目的产品结构当作本项目契约：
 
-本项目不是任一上游项目的官方发行版。Android 运行时的改动应能追溯到
-dsh-mobile-apk 基线；gateway 和 UI 的改动应能追溯到 dsh-Remote。开始开发前请先阅读
-[AGENTS.md](AGENTS.md)。
+- `dsh-mobile-apk` 提供 Android 壳、内嵌 Node/DSH 运行时生命周期、快照解压、SAF、前台服务、看门狗和原生桥；
+- `dsh-Remote` 提供 gateway 与 Web UI 的可复用基础。
+
+我们在此基础上做了本地化改造：将安装检测、DSH Engine、Local Gateway、WebView UI 拆成四层；让 Engine 和
+gateway 固定走本机回环；删去远程 Token、轮询和公网更新链路；由 Android 系统处理文件选择；默认只交付 minimal
+运行时，其他能力通过后续可选组件加入。上游基线、复制范围和许可证见 [UPSTREAM.md](UPSTREAM.md)。
+
+本项目不是任一上游项目的官方发行版。开始开发前请先阅读 [AGENTS.md](AGENTS.md)。
 
 ## 当前架构
 
@@ -43,6 +44,16 @@ DSH for Android UI（WebView）
 Engine 与 gateway 之间保留回环 HTTP/WebSocket，是为了复用现有 DSH 协议。由于运行范围是本机，
 远程服务器列表、Token 配对、网络轮询和公网公告/更新检查在本地模式中关闭，不属于 Android 本地运行时契约。
 
+### 默认最小运行时与可选组件
+
+当前 APK 内置 arm64 minimal 快照。默认 profile 只加载 DSH 启动所需的 shell、Web 兼容层、响应式 UI、默认模型
+配置和系统目录选择入口。编译器/链接器、Python/Perl/Ruby、npm/pnpm、ADB 管理、编辑器、OCR/PDF/Office、
+市场、撤销和外部文件打开不进入默认启动链。
+
+minimal 快照由 `scripts/build-minimal-snapshot.sh` 从完整快照可重复生成，profile 基线位于
+`runtime/minimal/cordis.patch.yml`。后续可选组件必须单独声明依赖、许可证、体积和测试，不得修改四层启动顺序。
+组件拆分清单见 [`docs/OPTIONAL_COMPONENTS.md`](docs/OPTIONAL_COMPONENTS.md)。
+
 ## 仓库结构
 
 ```text
@@ -65,9 +76,15 @@ dsh-local-android/
 │   └── public/                             # dsh-Remote UI 快照
 ├── tests/
 │   ├── local-gateway.test.mjs
-│   └── ui-local-mode.test.mjs
+│   ├── ui-local-mode.test.mjs
+│   └── minimal-profile.test.mjs
+├── runtime/minimal/
+│   └── cordis.patch.yml                   # 默认最小 profile
+├── scripts/
+│   └── build-minimal-snapshot.sh           # 从完整快照可重复生成 minimal 快照
 ├── docs/LOCAL_ARCHITECTURE.md               # 当前架构契约
 ├── docs/design.md                           # 当前技术设计
+├── docs/OPTIONAL_COMPONENTS.md              # 后续可选能力包边界
 ├── UPSTREAM.md                              # 上游基线和署名说明
 └── AGENTS.md                                # 开发规则和测试门禁
 ```
@@ -78,8 +95,8 @@ dsh-local-android/
 不提交到 Git，构建前请将匹配的快照放到
 `app/src/main/assets/snapshot.tar.xz`。
 
-当前面向实体手机的开发构建固定使用 arm64 快照。x86_64 模拟器必须替换成 x86_64 快照及其哈希，
-不能混用不同 ABI 的 Node/运行时。
+当前面向实体手机的开发构建固定使用 arm64 minimal 快照。x86_64 模拟器必须替换成 x86_64 minimal 快照及其
+哈希，不能混用不同 ABI 的 Node/运行时。快照本体不提交 Git，哈希记录在 `app/src/main/assets/snapshot.sha256`。
 
 ```sh
 export JAVA_HOME=/home/blank/Android/jdk21
@@ -107,15 +124,15 @@ app/build/outputs/apk/debug/app-debug.apk
 - `engine.log`：运行时解压、内嵌 Node 和 `dsh web` 启动日志；
 - `gateway.log`：本地 gateway 启动、上游探测和 gateway 请求日志。
 
-下面的警告通常不会导致引擎启动失败：
+如果后续启用附件格式可选组件，下面的警告通常不会导致引擎启动失败：
 
 ```text
 Cannot load "@napi-rs/canvas" package
 Cannot polyfill DOMMatrix / ImageData / Path2D
 ```
 
-它来自 `pdfjs-dist` 的可选 PDF 渲染能力。Engine 失败与 gateway 失败是两个独立问题，应先查看对应日志，
-再决定是否需要修改依赖。正常端点为：
+它来自 `pdfjs-dist` 的可选 PDF 渲染能力；默认 minimal 快照不加载该路径，因此正常情况下不应出现。Engine 失败
+与 gateway 失败是两个独立问题，应先查看对应日志，再决定是否需要修改依赖。正常端点为：
 
 ```text
 DSH Engine：    http://127.0.0.1:3080

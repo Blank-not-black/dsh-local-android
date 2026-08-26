@@ -18,6 +18,11 @@ Install / detection screen
 
 第一阶段保留 HTTP/WebSocket 作为 WebView 与 gateway 的进程间通信方式。它们只在 Android 回环接口上传输，不承担远程访问职责，因此可以移除远程连接相关的复杂度，而不必立即重写前端协议。
 
+默认构建使用 minimal arm64 运行时。基础 profile 只负责 DSH 启动、shell、Web 兼容、响应式 UI、默认模型
+和系统目录选择；编译器、脚本语言、包管理器、ADB、编辑器、附件/OCR、市场、撤销和外部文件打开均属于
+后续可选 capability pack。`scripts/build-minimal-snapshot.sh` 负责从完整快照生成可审计的 minimal 产物，
+不把可选组件混入四层启动链；能力包边界见 [`OPTIONAL_COMPONENTS.md`](OPTIONAL_COMPONENTS.md)。
+
 ## 模块边界
 
 ### 1. 安装 / 检测层
@@ -40,7 +45,7 @@ Install / detection screen
 负责启动成功后的 WebView 页面和用户交互。只有 Gateway 就绪后才接管页面；任何前置阶段失败
 都停留在安装/检测界面，并显示对应层的诊断。
 
-### Android 底座
+### 我们对 Android 底座的使用
 
 沿用上游壳层的以下能力：
 
@@ -51,6 +56,9 @@ Install / detection screen
 - 运行时更新、日志和崩溃恢复。
 
 上游来源：`https://github.com/kelai141/dsh-mobile-apk`。复制的源码保留其 MIT 许可；运行时快照中的第三方许可证继续放在 `app/src/main/assets/licenses/`。
+
+Android 壳中保留的控制台、ADB 桥、更新、撤销和外部文件处理代码属于可复用底座，但 minimal profile 不
+默认加载对应 DSH 插件。后续恢复某项能力时，需同时恢复其运行时依赖、UI 入口和阶段测试。
 
 ### 本地 gateway
 
@@ -77,7 +85,8 @@ Install / detection screen
 5. **实时闭环**：实时 mux/host、消息发送、审批和提问可用。
 6. **文件闭环**：SAF 授权目录映射到 DSH 工作区，支持浏览、上传、下载和工作区使用。
 7. **生命周期验收**：冷启动、后台恢复、引擎崩溃、gateway 崩溃和系统重启后自动恢复。
-8. **云端同步**：静态检查和可用 ABI 构建通过后，推送独立仓库的对应分支。
+8. **最小运行时**：生成并验证 minimal arm64 快照，确认可选组件未进入默认 profile。
+9. **云端同步**：静态检查和可用 ABI 构建通过后，推送独立仓库的对应分支。
 
 ## 暂不做
 
@@ -85,3 +94,4 @@ Install / detection screen
 - 不直接复用上游预构建 APK、签名密钥或品牌资源。
 - 不在第一阶段把 WebView 与 gateway 改成 Native Bridge；先保持协议复用，降低验证面。
 - 不承诺所有桌面 DSH 插件在 Android 上可用；插件兼容性需要单独清单和测试。
+- 不把编译器、Python/Perl/Ruby、npm/pnpm、ADB、附件/OCR、市场、撤销和编辑器作为默认安装项；它们必须以可选 pack 形式单独维护。
