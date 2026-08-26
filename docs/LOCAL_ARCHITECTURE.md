@@ -76,6 +76,16 @@ Android 壳中保留的控制台、ADB 桥、更新、撤销和外部文件处�
 
 `gateway/public/` 是 dsh-Remote UI 的独立快照。接入本地模式后，前端默认连接本地 gateway，并隐藏远程服务器、令牌配对和网络测速入口。保留同一套会话、文件、审批和统计交互。
 
+模型配置是 UI 层的用户交互，不越过 gateway 直接读取 Engine 私有文件：
+
+- 通过 `llm.providers` 与 `settings.describe` 获取可配置提供方和设置元数据；
+- 通过 `credentials.describe/set/unset` 管理 API 密钥，前端只接收脱敏状态；
+- 通过 `settings.mutate` 保存 API 地址、协议和模型目录，通过 `llm.discoverModels` 查询可用模型；
+- 生效时机使用 DSH 返回的 `applies` 字段，不由 Android 壳或 gateway 自行重启 Engine。
+
+这样模型配置仍然属于“WebView → Local Gateway → DSH Engine”的既有边界，不把凭据、DSH 配置文件或 Engine
+进程控制逻辑耦合进 Android UI。
+
 ## 里程碑
 
 1. **仓库基线**：上游 Android 壳、dsh-Remote gateway/UI、许可证和上游说明齐全。

@@ -58,6 +58,17 @@ keeps the existing DSH protocol reusable. Remote server lists, token pairing,
 network polling, and public announcement/update checks are disabled in local
 mode; they are not part of the Android local runtime contract.
 
+### Model configuration
+
+Open “Settings → Models” in the app to manage the providers declared by DSH.
+The page calls DSH through the local gateway using `llm.providers`,
+`settings.describe`, `credentials.*`, and `settings.mutate`. It supports provider
+status, API keys, API URL/protocol, editable model catalogs, and model discovery
+through `llm.discoverModels`. API keys are write-only: the UI shows only whether a
+credential is configured and never stores the secret in WebView localStorage, the
+URL, or gateway logs. Live/restart behavior follows the setting metadata returned
+by DSH.
+
 ### Minimal default runtime and optional capabilities
 
 The APK currently embeds an arm64 minimal snapshot. The default profile loads
@@ -93,10 +104,12 @@ dsh-local-android/
 ├── gateway/
 │   ├── gateway.js                          # dsh-Remote gateway, local mode
 │   ├── gateway-stats.cjs
-│   └── public/                             # dsh-Remote UI snapshot
+│   └── public/                             # DSH for Android UI snapshot
 ├── tests/
 │   ├── local-gateway.test.mjs
 │   ├── ui-local-mode.test.mjs
+│   ├── model-settings.test.mjs
+│   ├── app-identity.test.mjs
 │   └── minimal-profile.test.mjs
 ├── runtime/minimal/
 │   └── cordis.patch.yml                   # default minimal profile

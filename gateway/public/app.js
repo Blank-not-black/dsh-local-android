@@ -92,6 +92,8 @@ const state = {
   fs: { path: null, initial: null, loaded: false, upload: null, workspaceId: LS.get('fsWorkspaceIdV1', ''), preview: null },
   composerImages: [], // 当前草稿中的图片附件：只在发送成功后释放
   models: { loaded: false, loading: false, groups: [], current: null, failures: [] },
+  modelSettings: { status: 'idle', error: '', writable: false, hasDocument: false, providers: [], namespaces: [], credentials: {} },
+  modelEditor: null,
   wb: null,
   wbProjects: [],
   wbArchived: [],
@@ -4294,6 +4296,14 @@ async function checkUpdate(silent) {
     if (!silent) toast(t('update.noVersion'), 'err')
     return
   }
+  if (LOCAL_MODE) {
+    state.updateInfo = null
+    $('update-desc').textContent = t('update.latestV', { version: state.localVersion })
+    resetUpdateExpand()
+    $('btn-download-update').classList.add('hidden')
+    if (!silent) toast(t('update.latestToast'), 'ok')
+    return
+  }
   const base = updateBase()
   if (!base) {
     if (!silent) toast(t('update.needServer'), 'err')
@@ -4434,7 +4444,7 @@ function notify(title, body) {
       CAP.Plugins.LocalNotifications.schedule({
         notifications: [{
           id: (Date.now() % 100000) + 1,
-          title: 'DSH Remote · ' + title,
+          title: 'DSH for Android · ' + title,
           body,
           schedule: { at: new Date(Date.now() + 800) }
         }]
@@ -4444,7 +4454,7 @@ function notify(title, body) {
   }
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification('DSH Remote · ' + title, { body })
+      new Notification('DSH for Android · ' + title, { body })
     }
   } catch {}
 }
@@ -4465,7 +4475,7 @@ async function sendTestNotification() {
     await L.schedule({
       notifications: [{
         id: 8899,
-        title: 'DSH Remote',
+    title: 'DSH for Android',
         body: '测试通知 · Test',
         schedule: { at: new Date(Date.now() + 3000) }
       }]
@@ -4624,6 +4634,412 @@ async function restorePeakReminders() {
   if (peakRemindOn() && legacyCleaned) await schedulePeakReminders({ legacyCleaned: true })
 }
 
+/* ---------------- 模型设置 ---------------- */
+const MODEL_SETTINGS_FIELDS = ['baseURL', 'api', 'apiKeyEnv', 'displayName', 'models']
+
+function modelValueAt(value, path = []) {
+  let current = value
+  for (const part of path) {
+    if (current === null || typeof current !== 'object') return undefined
+    current = current[part]
+  }
+  return current
+}
+
+function cloneModelValue(value) {
+  if (value === undefined) return undefined
+  try { return structuredClone(value) } catch {}
+  try { return JSON.parse(JSON.stringify(value)) } catch { return value }
+}
+
+function modelObjectAt(value, path = []) {
+  const result = modelValueAt(value, path)
+  return result && typeof result === 'object' && !Array.isArray(result) ? cloneModelValue(result) : {}
+}
+
+function modelKeyRefFor(provider, namespace, path) {
+  const effective = modelObjectAt(namespace?.value, path)
+  const user = modelObjectAt(namespace?.user, path)
+  const named = typeof user.apiKeyEnv === 'string' && user.apiKeyEnv.trim()
+    ? user.apiKeyEnv.trim()
+    : typeof effective.apiKeyEnv === 'string' && effective.apiKeyEnv.trim()
+      ? effective.apiKeyEnv.trim()
+      : ''
+  if (named) return named
+  if (namespace?.ns === 'llm-deepseek') return 'DEEPSEEK_API_KEY'
+  if (namespace?.ns === 'llm-pi-ai') return provider.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY'
+  return ''
+}
+
+function modelProfileName(row) {
+  const display = String(row.displayName || row.provider || '')
+  return display === row.provider ? display : `${display} (${row.provider})`
+}
+
+function modelSettingsNamespace(ns) {
+  return state.modelSettings.namespaces.find(item => item.ns === ns) || null
+}
+
+function modelSettingsRow(provider) {
+  return state.modelSettings.providers.find(row => row.provider === provider) || null
+}
+
+function modelSettingsPathChanged(before, after, key) {
+  return JSON.stringify(before?.[key]) !== JSON.stringify(after?.[key])
+}
+
+function modelCatalogRows(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(model => model && typeof model === 'object' && !Array.isArray(model))
+    .map(model => cloneModelValue(model))
+}
+
+async function loadModelSettings(force = false) {
+  if (!state.token) {
+    state.modelSettings = { ...state.modelSettings, status: 'error', error: t('token.notSetHint') }
+    renderModelSettings()
+    return
+  }
+  if (state.modelSettings.status === 'loading') return
+  if (!force && state.modelSettings.status === 'ready') return
+  state.modelSettings = { ...state.modelSettings, status: 'loading', error: '' }
+  renderModelSettings()
+  try {
+    const [providersValue, settingsValue] = await Promise.all([
+      rpc('llm.providers', {}),
+      rpc('settings.describe', {})
+    ])
+    const namespaces = Array.isArray(settingsValue?.namespaces) ? settingsValue.namespaces : []
+    const providers = Array.isArray(providersValue?.providers) ? providersValue.providers : []
+    const rows = providers.map(entry => {
+      const settingsPath = Array.isArray(entry.settingsPath) ? entry.settingsPath : []
+      const namespace = namespaces.find(item => item.ns === entry.settingsNs) || null
+      const effective = modelObjectAt(namespace?.value, settingsPath)
+      const keyRef = modelKeyRefFor(entry.provider, namespace, settingsPath)
+      return {
+        ...entry,
+        settingsPath,
+        keyRef,
+        namespace,
+        configured: namespace !== null && (settingsPath.length === 0 || modelValueAt(namespace.value, settingsPath) !== undefined),
+        effective,
+        credential: null
+      }
+    })
+    const refs = [...new Set(rows.map(row => row.keyRef).filter(Boolean))]
+    let credentials = {}
+    if (refs.length > 0) {
+      const value = await rpc('credentials.describe', { refs })
+      credentials = value?.credentials && typeof value.credentials === 'object' ? value.credentials : {}
+    }
+    state.modelSettings = {
+      status: 'ready',
+      error: '',
+      writable: settingsValue?.writable === true,
+      hasDocument: settingsValue?.hasDocument === true,
+      providers: rows.map(row => ({ ...row, credential: row.keyRef ? credentials[row.keyRef] || null : null })),
+      namespaces,
+      credentials
+    }
+    state.modelEditor = null
+  } catch (error) {
+    state.modelSettings = { ...state.modelSettings, status: 'error', error: error?.message || String(error) }
+  }
+  renderModelSettings()
+}
+
+function renderModelSettings() {
+  const status = $('model-settings-status')
+  const list = $('model-settings-list')
+  if (!status || !list) return
+  const current = state.modelSettings
+  if (current.status === 'loading') {
+    status.className = 'model-settings-status muted'
+    status.textContent = t('settings.modelLoading')
+    list.innerHTML = ''
+    return
+  }
+  if (current.status === 'error') {
+    status.className = 'model-settings-status error'
+    status.textContent = t('settings.modelUnavailable', { msg: current.error || t('err.dshError') })
+    list.innerHTML = ''
+    return
+  }
+  if (!current.providers.length) {
+    status.className = 'model-settings-status muted'
+    status.textContent = t('settings.modelEmpty')
+    list.innerHTML = ''
+    return
+  }
+  status.className = 'model-settings-status ' + (current.writable ? 'muted' : 'model-readonly')
+  status.textContent = current.writable ? t('settings.modelIntro') : t('settings.modelReadOnly')
+  list.innerHTML = current.providers.map(renderModelProviderCard).join('')
+}
+
+function renderModelProviderCard(row) {
+  const editor = state.modelEditor?.provider === row.provider ? renderModelEditor() : ''
+  const credentialConfigured = row.credential?.configured === true
+  const dot = row.keyRef ? (credentialConfigured ? 'configured' : '') : 'unknown'
+  const stateLabel = row.keyRef
+    ? (credentialConfigured ? t('settings.modelConfigured') : t('settings.modelMissing'))
+    : t('settings.modelConfigured')
+  return `<article class="model-provider-card" data-model-provider-card="${esc(row.provider)}">
+    <div class="model-provider-head">
+      <div class="model-provider-identity">
+        <span class="model-provider-dot ${dot}" title="${esc(stateLabel)}" aria-label="${esc(stateLabel)}"></span>
+        <span class="model-provider-name">${esc(row.displayName || row.provider)}</span>
+        <code class="model-provider-route">${esc(row.provider)}</code>
+      </div>
+      <button class="mini-btn" type="button" data-model-action="edit" data-model-provider="${esc(row.provider)}">${esc(t('settings.modelEdit'))}</button>
+    </div>
+    ${editor}
+  </article>`
+}
+
+function renderModelEditor() {
+  const editor = state.modelEditor
+  if (!editor) return ''
+  const readOnly = !state.modelSettings.writable || editor.busy
+  const keyPlaceholder = editor.keyConfigured && !editor.clearKey
+    ? t('settings.modelApiKeyStored')
+    : t('settings.modelApiKeyPlaceholder')
+  const models = editor.models || []
+  const modelList = models.length
+    ? models.map((model, index) => `<div class="model-entry">
+        <input class="model-input" data-model-field="model-id" data-model-index="${index}" value="${esc(model.id || '')}" placeholder="${esc(t('settings.modelId'))}" aria-label="${esc(t('settings.modelId'))} ${index + 1}" ${readOnly ? 'disabled' : ''}>
+        <input class="model-input model-name-input" data-model-field="model-name" data-model-index="${index}" value="${esc(model.name || '')}" placeholder="${esc(t('settings.modelName'))}" aria-label="${esc(t('settings.modelName'))} ${index + 1}" ${readOnly ? 'disabled' : ''}>
+        <button class="model-entry-remove" type="button" data-model-action="remove-model" data-model-index="${index}" aria-label="${esc(t('settings.modelRemove'))}" title="${esc(t('settings.modelRemove'))}" ${readOnly ? 'disabled' : ''}>×</button>
+      </div>`).join('')
+    : `<div class="model-empty">${esc(t('settings.modelNoModels'))}</div>`
+  const discovery = editor.discovered?.length
+    ? `<div class="model-discovery">
+        <div class="model-discovery-head"><span>${esc(t('settings.modelCandidates'))}</span><button class="mini-btn" type="button" data-model-action="select-all">${esc(editor.discoverySelected.size === editor.discovered.length ? t('settings.modelSelectNone') : t('settings.modelSelectAll'))}</button></div>
+        <div class="model-discovery-list">${editor.discovered.map((model, index) => `<label class="model-discovery-row"><input type="checkbox" data-model-candidate="${esc(model.id)}" ${editor.discoverySelected.has(model.id) ? 'checked' : ''}><code>${esc(model.id)}${model.name && model.name !== model.id ? ` · ${esc(model.name)}` : ''}</code></label>`).join('')}</div>
+        <button class="mini-btn" type="button" data-model-action="add-selected" ${readOnly ? 'disabled' : ''}>${esc(t('settings.modelAddSelected'))}</button>
+      </div>`
+    : ''
+  const effectText = editor.applies === 'restart' ? t('settings.modelRestart') : t('settings.modelLive')
+  return `<div class="model-editor">
+    <div class="model-editor-title"><strong>${esc(editor.displayName || editor.provider)}</strong><code>${esc(editor.provider)}</code></div>
+    <div class="model-field">
+      <label for="model-api-key-${esc(editor.provider)}">${esc(t('settings.modelApiKey'))}</label>
+      <input id="model-api-key-${esc(editor.provider)}" class="model-input" type="password" autocomplete="off" data-model-field="apiKey" value="${esc(editor.keyDraft || '')}" placeholder="${esc(keyPlaceholder)}" ${readOnly || editor.keyWritable === false ? 'disabled' : ''}>
+      ${editor.keyConfigured && editor.keyWritable !== false ? `<button class="mini-btn" type="button" data-model-action="clear-key" ${readOnly ? 'disabled' : ''}>${esc(t('settings.modelClearKey'))}</button>` : ''}
+    </div>
+    <div class="model-inline">
+      <div class="model-field"><label for="model-base-url-${esc(editor.provider)}">${esc(t('settings.modelBaseUrl'))}</label><input id="model-base-url-${esc(editor.provider)}" class="model-input" type="url" data-model-field="baseURL" value="${esc(editor.baseURL || '')}" placeholder="${esc(t('settings.modelBaseUrlPlaceholder'))}" ${readOnly ? 'disabled' : ''}></div>
+      ${editor.api ? `<div class="model-field"><span class="model-field-label">${esc(t('settings.modelProtocol'))}</span><input class="model-input" data-model-field="api" value="${esc(editor.api)}" ${readOnly ? 'disabled' : ''}></div>` : ''}
+    </div>
+    <div class="model-catalog">
+      <div class="model-catalog-head"><div><div class="model-catalog-title">${esc(t('settings.modelCatalog'))}</div><div class="model-catalog-hint">${esc(t('settings.modelCatalogHint'))}</div></div><div class="model-catalog-actions"><button class="mini-btn" type="button" data-model-action="discover" ${readOnly || editor.busy ? 'disabled' : ''}>${esc(editor.busy ? t('settings.modelFetching') : t('settings.modelFetch'))}</button><button class="mini-btn" type="button" data-model-action="add-model" ${readOnly ? 'disabled' : ''}>${esc(t('settings.modelAdd'))}</button></div></div>
+      <div class="model-list">${modelList}</div>
+      ${discovery}
+    </div>
+    ${editor.error ? `<p class="model-editor-error">${esc(editor.error)}</p>` : ''}
+    <div class="model-editor-actions"><span class="model-catalog-hint">${esc(effectText)}</span><button class="mini-btn" type="button" data-model-action="cancel">${esc(t('settings.modelCancel'))}</button><button class="mini-btn primary" type="button" data-model-action="save" ${readOnly ? 'disabled' : ''}>${esc(editor.busy ? t('settings.modelSaving') : t('settings.modelSave'))}</button></div>
+  </div>`
+}
+
+function openModelEditor(provider) {
+  const row = modelSettingsRow(provider)
+  const namespace = row?.namespace
+  if (!row || !namespace) return
+  const effective = modelObjectAt(namespace.value, row.settingsPath)
+  const user = modelObjectAt(namespace.user, row.settingsPath)
+  state.modelEditor = {
+    provider: row.provider,
+    displayName: row.displayName,
+    settingsNs: row.settingsNs,
+    settingsPath: row.settingsPath,
+    namespace,
+    userProfile: user,
+    effectiveProfile: effective,
+    keyRef: row.keyRef || '',
+    keyConfigured: row.credential?.configured === true,
+    keyWritable: row.credential?.writable !== false,
+    baseURL: typeof (user.baseURL ?? effective.baseURL) === 'string' ? (user.baseURL ?? effective.baseURL) : '',
+    initialBaseURL: typeof user.baseURL === 'string' ? user.baseURL : '',
+    api: typeof (user.api ?? effective.api) === 'string' ? (user.api ?? effective.api) : '',
+    initialApi: typeof user.api === 'string' ? user.api : '',
+    models: modelCatalogRows(user.models ?? effective.models),
+    modelsDirty: false,
+    baseURLDirty: false,
+    apiDirty: false,
+    keyDraft: '',
+    clearKey: false,
+    discovered: [],
+    discoverySelected: new Set(),
+    applies: namespace.applies,
+    busy: false,
+    error: ''
+  }
+  renderModelSettings()
+}
+
+function collectModelEditorForm() {
+  const editor = state.modelEditor
+  const root = $('model-settings-list')
+  if (!editor || !root) return
+  const base = root.querySelector('[data-model-field="baseURL"]')
+  const api = root.querySelector('[data-model-field="api"]')
+  const key = root.querySelector('[data-model-field="apiKey"]')
+  if (base) editor.baseURL = base.value.trim()
+  if (api) editor.api = api.value.trim()
+  if (key) editor.keyDraft = key.value
+  root.querySelectorAll('[data-model-field="model-id"]').forEach(input => {
+    const index = Number(input.dataset.modelIndex)
+    if (editor.models[index]) editor.models[index].id = input.value.trim()
+  })
+  root.querySelectorAll('[data-model-field="model-name"]').forEach(input => {
+    const index = Number(input.dataset.modelIndex)
+    if (editor.models[index]) {
+      const value = input.value.trim()
+      if (value) editor.models[index].name = value
+      else delete editor.models[index].name
+    }
+  })
+}
+
+function setModelEditorError(message) {
+  if (!state.modelEditor) return
+  state.modelEditor.error = message || ''
+  renderModelSettings()
+}
+
+async function discoverModelSettings() {
+  const editor = state.modelEditor
+  if (!editor || editor.busy) return
+  collectModelEditorForm()
+  editor.busy = true
+  editor.error = ''
+  renderModelSettings()
+  try {
+    const payload = { settingsNs: editor.settingsNs }
+    if (editor.provider) payload.provider = editor.provider
+    if (editor.baseURL) payload.baseURL = editor.baseURL
+    if (editor.api) payload.api = editor.api
+    if (editor.keyDraft.trim()) payload.apiKey = editor.keyDraft.trim()
+    const value = await rpc('llm.discoverModels', payload)
+    const found = Array.isArray(value?.models) ? value.models.filter(model => model && typeof model.id === 'string' && model.id.trim()) : []
+    if (!found.length) throw new Error(t('settings.modelFetchEmpty'))
+    const known = new Set(editor.models.map(model => model.id))
+    editor.discovered = found
+    editor.discoverySelected = new Set(found.filter(model => !known.has(model.id)).map(model => model.id))
+  } catch (error) {
+    editor.error = t('settings.modelFetchFailed', { msg: error?.message || String(error) })
+  } finally {
+    editor.busy = false
+  }
+  renderModelSettings()
+}
+
+function addDiscoveredModels() {
+  const editor = state.modelEditor
+  if (!editor) return
+  collectModelEditorForm()
+  const known = new Set(editor.models.map(model => model.id))
+  for (const candidate of editor.discovered || []) {
+    if (!editor.discoverySelected.has(candidate.id) || known.has(candidate.id)) continue
+    editor.models.push({ id: candidate.id, ...(candidate.name ? { name: candidate.name } : {}), ...(candidate.contextWindow ? { contextWindow: candidate.contextWindow } : {}), ...(candidate.maxTokens ? { maxTokens: candidate.maxTokens } : {}) })
+    known.add(candidate.id)
+  }
+  editor.modelsDirty = true
+  editor.discovered = []
+  editor.discoverySelected = new Set()
+  renderModelSettings()
+}
+
+async function saveModelEditor() {
+  const editor = state.modelEditor
+  if (!editor || editor.busy) return
+  collectModelEditorForm()
+  if (!state.modelSettings.writable) return setModelEditorError(t('settings.modelReadOnly'))
+  const models = editor.models || []
+  if (editor.modelsDirty && models.some(model => !String(model.id || '').trim())) return setModelEditorError(t('settings.modelIdRequired'))
+  if (editor.keyDraft.trim() && !editor.keyRef) return setModelEditorError(t('settings.modelSaveFailed', { msg: t('settings.modelApiKey') }))
+  editor.busy = true
+  editor.error = ''
+  renderModelSettings()
+  try {
+    const before = editor.userProfile || {}
+    const after = { ...before }
+    if (editor.baseURLDirty) {
+      if (editor.baseURL) after.baseURL = editor.baseURL
+      else delete after.baseURL
+    }
+    if (editor.apiDirty) {
+      if (editor.api) after.api = editor.api
+      else delete after.api
+    }
+    if (editor.modelsDirty) after.models = models.map(model => cloneModelValue(model))
+    if (editor.settingsNs === 'llm-pi-ai' && editor.keyDraft.trim() && !after.apiKeyEnv) after.apiKeyEnv = editor.keyRef
+    const ops = MODEL_SETTINGS_FIELDS.flatMap(key => {
+      if (!modelSettingsPathChanged(before, after, key)) return []
+      const path = [...editor.settingsPath, key]
+      return after[key] === undefined ? [{ op: 'unset', path }] : [{ op: 'set', path, value: after[key] }]
+    })
+    if (ops.length) {
+      const value = await rpc('settings.mutate', { ns: editor.settingsNs, ops, expectedRevision: editor.namespace.revision })
+      editor.namespace = value
+    }
+    if (editor.keyDraft.trim()) {
+      await rpc('credentials.set', { ref: editor.keyRef, value: editor.keyDraft.trim() })
+    } else if (editor.clearKey && editor.keyConfigured && editor.keyRef) {
+      await rpc('credentials.unset', { ref: editor.keyRef })
+    }
+    state.modelEditor = null
+    await loadModelSettings(true)
+    toast(t('settings.modelSaved'), 'ok')
+  } catch (error) {
+    editor.error = t('settings.modelSaveFailed', { msg: error?.message || String(error) })
+  } finally {
+    if (state.modelEditor === editor) {
+      editor.busy = false
+      renderModelSettings()
+    }
+  }
+}
+
+function handleModelSettingsClick(event) {
+  const action = event.target.closest('[data-model-action]')
+  if (!action) return
+  const type = action.dataset.modelAction
+  if (type === 'edit') return openModelEditor(action.dataset.modelProvider)
+  if (type === 'cancel') { state.modelEditor = null; renderModelSettings(); return }
+  if (type === 'save') return void saveModelEditor()
+  const editor = state.modelEditor
+  if (!editor) return
+  if (type === 'add-model') {
+    collectModelEditorForm(); editor.models.push({ id: '' }); editor.modelsDirty = true; renderModelSettings(); return
+  }
+  if (type === 'remove-model') {
+    collectModelEditorForm(); editor.models.splice(Number(action.dataset.modelIndex), 1); editor.modelsDirty = true; renderModelSettings(); return
+  }
+  if (type === 'clear-key') { collectModelEditorForm(); editor.keyDraft = ''; editor.clearKey = true; renderModelSettings(); return }
+  if (type === 'discover') return void discoverModelSettings()
+  if (type === 'add-selected') return addDiscoveredModels()
+  if (type === 'select-all') {
+    const ids = (editor.discovered || []).map(model => model.id)
+    editor.discoverySelected = editor.discoverySelected.size === ids.length ? new Set() : new Set(ids)
+    renderModelSettings()
+  }
+}
+
+function handleModelSettingsInput(event) {
+  const editor = state.modelEditor
+  if (!editor) return
+  const field = event.target.dataset.modelField
+  if (field === 'baseURL') editor.baseURLDirty = true
+  if (field === 'api') editor.apiDirty = true
+  if (field === 'model-id' || field === 'model-name') editor.modelsDirty = true
+}
+
+async function openModelConfigDocument() {
+  const value = await safeRpc('settings.openDocument', {}, t('settings.modelOpenConfigFailed'))
+  if (value?.opened) toast(t('settings.modelOpenedConfig'), 'ok')
+}
+
 /* ---------------- 视图切换 ---------------- */
 function showView(id) {
   for (const v of ['view-home', 'view-files', 'view-session', 'view-activity', 'view-stats', 'view-settings']) $(v).classList.toggle('hidden', v !== id)
@@ -4640,7 +5056,7 @@ function showView(id) {
   if (id === 'view-settings') showSettingsHome()
 }
 
-const SETTINGS_GROUPS = ['general', 'servers', 'notify', 'theme', 'about']
+const SETTINGS_GROUPS = ['general', 'model', 'servers', 'notify', 'theme', 'about']
 function showSettingsHome() {
   const home = $('settings-home')
   if (!home) return
@@ -4654,6 +5070,7 @@ function showSettingsPage(name) {
   home.classList.add('hidden')
   for (const g of SETTINGS_GROUPS) $('settings-page-' + g)?.classList.toggle('hidden', g !== name)
   window.scrollTo(0, 0)
+  if (name === 'model') void loadModelSettings()
 }
 
 function updateConn() {
@@ -5346,6 +5763,7 @@ function bindUi() {
     renderAnnouncementBoard()
     renderPending(); renderQueue(); renderJobs()
     updateConn()
+    if (state.modelSettings.status === 'ready' || state.modelSettings.status === 'error' || state.modelSettings.status === 'loading') renderModelSettings()
     if (state.current) { renderSessionTitle(); renderSessionSub(); renderSessionCards(); renderHistory(true) }
     else renderModelMenu()
     loadLocalVersion()
@@ -5646,6 +6064,10 @@ function bindUi() {
     if (group) { showSettingsPage(group.dataset.settingsGroup); return }
     if (e.target.closest('[data-settings-back]')) { showSettingsHome(); return }
   })
+  $('btn-model-settings-refresh')?.addEventListener('click', () => loadModelSettings(true))
+  $('btn-model-settings-open')?.addEventListener('click', openModelConfigDocument)
+  $('model-settings-list')?.addEventListener('click', handleModelSettingsClick)
+  $('model-settings-list')?.addEventListener('input', handleModelSettingsInput)
   $('btn-scan-camera').addEventListener('click', () => scanPair('CAMERA'))
   $('btn-scan-gallery').addEventListener('click', () => scanPair('PHOTOS'))
   $('scan-live-cancel')?.addEventListener('click', () => closeLiveScan(''))

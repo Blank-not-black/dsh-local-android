@@ -1,6 +1,6 @@
 {
-  "name": "DSH Remote",
-  "short_name": "DSH Remote",
+  "name": "DSH for Android",
+  "short_name": "DSH for Android",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b0e1a",

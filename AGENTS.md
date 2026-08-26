@@ -68,6 +68,8 @@ gateway/
 tests/
   local-gateway.test.mjs       gateway 本地模式、健康、鉴权测试
   ui-local-mode.test.mjs       UI 本地模式静态契约测试
+  model-settings.test.mjs      提供方、凭据和模型目录 UI 契约测试
+  app-identity.test.mjs        应用名称与版本契约测试
   minimal-profile.test.mjs     minimal profile 静态边界测试
 
 app/src/test/
@@ -80,6 +82,9 @@ docs/
 
 `gateway/` 由 Gradle 作为 Android asset source 打包，运行时部署到
 `filesDir/dsh-local-gateway/`，不直接从 APK 资产目录运行。
+
+设置页的模型配置属于 UI 层：通过 Local Gateway 转发 DSH 的模型/设置 RPC；API 密钥只使用 DSH credentials
+服务保存，不写入 WebView localStorage，也不由 Android 壳直接读写 DSH 私有配置。
 
 ## 3. 启动契约
 
@@ -169,3 +174,4 @@ minimal 快照和哈希，不能混用。完整快照不随仓库提交；需要
 | 2026-08-26 | 0.1.3-local | 文档口径切换为 dsh-local-android：明确上游基础、四层结构、测试和设备验证边界。 |
 | 2026-08-26 | 0.1.4-local | 增加可重复的 arm64 minimal 快照裁剪，默认 profile 与可选 capability pack 边界明确。 |
 | 2026-08-26 | 0.1.5-local | 保留 minimal profile 的四个基础冲突禁用项，完成 Waydroid x86_64 端到端启动验证。 |
+| 2026-08-26 | 0.1.0-rc.1 | 增加设置-模型配置，支持提供方、API 密钥、API 地址、模型目录和模型发现；统一 DSH for Android 品牌与版本。 |

@@ -111,6 +111,10 @@ http://127.0.0.1:8787/?local=1
 `gateway/public/app.js` 根据 `local=1` 隐藏远程配置和网络相关入口，并连接本地 gateway。UI 只能通过
 现有 Web API 和 `window.androidBridge` 使用后端能力，不得自行拉起 DSH 进程或绕过 gateway 访问内部端口。
 
+模型配置继续遵循这条边界。设置页使用 `llm.providers`、`settings.describe`、`credentials.*`、
+`settings.mutate` 和 `llm.discoverModels` 完成提供方、凭据、API 地址和模型目录管理；API 密钥只以脱敏状态
+回显，不能进入 localStorage、URL 或日志。Android 壳不解析 DSH 配置文件，也不代替 Engine 执行配置变更。
+
 ### 2.5 Minimal profile 与可选能力
 
 `runtime/minimal/cordis.patch.yml` 是默认 profile 的唯一基线。它关闭基础 bundle 中会与 Android 适配层冲突的
@@ -199,6 +203,7 @@ dsh-Remote 远程 token 作为 Android 用户配置要求。
 | Gateway 健康检查 | `GatewayProbe.kt` |
 | UI 接管 | `MainActivity.kt`、`gateway/public/app.js` |
 | 本地 gateway 适配 | `gateway/gateway.js`、`gateway/public/index.html` |
+| 模型配置 UI | `gateway/public/app.js`、`gateway/public/index.html`、`tests/model-settings.test.mjs` |
 | 分层日志 | `LogCollector.kt`、`engine.log`、`gateway.log` |
 | 本地模式回归测试 | `tests/local-gateway.test.mjs`、`tests/ui-local-mode.test.mjs` |
 

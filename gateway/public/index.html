@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#05348B">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>DSH Remote</title>
+  <title>DSH for Android</title>
   <script>/* 统一入口: 桌面浏览器(宽屏且 UA 非移动)访问根地址自动切换到桌面端, 手机/窄窗口继续 App 界面 */ (function(){try{var proto=location.protocol;var ua=navigator.userAgent||'';var mobile=/Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);if((proto==='http:'||proto==='https:')&&!mobile&&window.innerWidth>=1024){var p=location.pathname;if(p==='/'||/\/index\.html$/.test(p)){location.replace('desktop/desktop.html'+location.search)}}}catch(e){}})()</script>
   <script>/* 首帧前应用皮肤, 避免闪白/闪黑 */ (function(){try{var t=localStorage.getItem('dshTheme');if(t!=='default'&&t!=='dark'&&t!=='light'&&t!=='neutral'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'default'}document.documentElement.setAttribute('data-theme',t)}catch(e){}})()</script>
   <link rel="manifest" href="manifest.webmanifest">
@@ -17,7 +17,7 @@
   <header class="topbar">
     <div class="brand">
       <span class="brand-dot"></span>
-      <span class="brand-name">DSH Remote</span>
+      <span class="brand-name">DSH for Android</span>
     </div>
     <div class="topbar-right">
       <button id="btn-donate" class="topbar-btn icon-btn" data-i18n-title="settings.donate" data-i18n-aria="settings.donate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8h11v6a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4Z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M9 4c0 1 1 1.2 1 2M13 4c0 1 1 1.2 1 2M5 20h13"/></svg></button>
@@ -244,6 +244,9 @@
           <div class="setting-row" data-settings-group="general" style="cursor:pointer">
             <div><div class="setting-name" data-i18n="settings.groupGeneral">通用</div><div class="setting-desc" data-i18n="settings.groupGeneralDesc">显示工具调用、预设提示词</div></div>
           </div>
+          <div class="setting-row" data-settings-group="model" style="cursor:pointer">
+            <div><div class="setting-name" data-i18n="settings.groupModel">模型</div><div class="setting-desc" data-i18n="settings.groupModelDesc">提供方、API 密钥和模型目录</div></div>
+          </div>
           <div id="settings-group-servers" class="setting-row" data-settings-group="servers" style="cursor:pointer">
             <div><div class="setting-name" data-i18n="settings.groupServers">服务器</div><div class="setting-desc" data-i18n="settings.groupServersDesc">服务器地址、扫码连接</div></div>
           </div>
@@ -292,7 +295,7 @@
             <button id="btn-reset" class="mini-btn" data-i18n="settings.reset">重置</button>
           </div>
         </div>
-        <p class="about" data-i18n="settings.about">DSH Remote · 局域网 / Tailscale 均可访问<br>仅作为 DSH 本机 3080 端口的带认证代理</p>
+        <p class="about" data-i18n="settings.about">DSH for Android · 本地回环运行<br>连接内置 DSH Engine</p>
       </div>
 
       <div id="settings-page-general" class="settings-subpage hidden">
@@ -319,6 +322,29 @@
             <button id="btn-preset-add" class="mini-btn" data-i18n="presets.add">新增</button>
           </div>
           <div id="preset-list" class="server-list"></div>
+        </div>
+      </div>
+
+      <div id="settings-page-model" class="settings-subpage hidden">
+        <div class="settings-group">
+          <div class="setting-row" data-settings-back style="cursor:pointer">
+            <button class="mini-btn" data-i18n="settings.back">‹ 返回</button>
+            <div class="setting-name" data-i18n="settings.groupModel">模型</div>
+          </div>
+        </div>
+        <div class="settings-group model-settings-shell">
+          <div class="model-settings-head">
+            <div>
+              <div class="setting-name" data-i18n="settings.modelTitle">模型</div>
+              <div class="setting-desc expanded" data-i18n="settings.modelIntro">填入各提供方的 API 密钥即可使用其模型。</div>
+            </div>
+            <div class="setting-actions">
+              <button id="btn-model-settings-open" class="mini-btn" type="button" data-i18n="settings.modelOpenConfig">打开配置文件</button>
+              <button id="btn-model-settings-refresh" class="mini-btn" type="button" data-i18n="settings.modelRefresh">刷新</button>
+            </div>
+          </div>
+          <div id="model-settings-status" class="model-settings-status muted" data-i18n="settings.modelLoading">加载模型配置…</div>
+          <div id="model-settings-list" class="model-settings-list"></div>
         </div>
       </div>
 
@@ -944,12 +970,23 @@
         'scan.paired': '配对成功，正在连接', 'scan.pairedLink': '已通过二维码配对', 'scan.notPair': '这不是 DSH Remote 的配对二维码',
         'scan.cancelled': '已取消扫码', 'scan.failed': '扫码失败：{msg}',
         'settings.groupGeneral': '通用', 'settings.groupGeneralDesc': '显示工具调用、预设提示词',
+        'settings.groupModel': '模型', 'settings.groupModelDesc': '提供方、API 密钥和模型目录',
         'settings.groupServers': '服务器', 'settings.groupServersDesc': '服务器地址、扫码连接',
         'settings.groupNotify': '通知', 'settings.groupNotifyDesc': '通知、提醒、后台轮询',
         'settings.groupTheme': '皮肤', 'settings.groupThemeDesc': '配色主题',
         'settings.groupAbout': '关于', 'settings.groupAboutDesc': 'DSH 状态、检查更新',
         'settings.donate': '赞赏支持', 'settings.donateDesc': '如果 dsh-remote 帮到了你，欢迎赞赏支持开发 ☕', 'settings.donateThanks': '感谢你的支持 ☕',
         'settings.back': '‹ 返回',
+        'settings.modelTitle': '模型', 'settings.modelIntro': '填入各提供方的 API 密钥即可使用其模型。', 'settings.modelRefresh': '刷新', 'settings.modelOpenConfig': '打开配置文件',
+        'settings.modelLoading': '加载模型配置…', 'settings.modelUnavailable': '模型配置暂不可用：{msg}', 'settings.modelEmpty': '当前 DSH 未声明可配置的提供方', 'settings.modelReadOnly': '当前配置只读',
+        'settings.modelConfigured': '已配置', 'settings.modelMissing': '未配置', 'settings.modelEdit': '编辑', 'settings.modelSave': '保存', 'settings.modelSaving': '保存中…', 'settings.modelCancel': '取消',
+        'settings.modelApiKey': 'API 密钥', 'settings.modelApiKeyPlaceholder': '输入 API 密钥（留空保持不变）', 'settings.modelApiKeyStored': '已保存的密钥，留空保持不变', 'settings.modelClearKey': '清除密钥',
+        'settings.modelBaseUrl': 'API 地址', 'settings.modelBaseUrlPlaceholder': '提供方默认', 'settings.modelProtocol': '协议', 'settings.modelDisplayName': '显示名称',
+        'settings.modelCatalog': '模型目录', 'settings.modelCatalogHint': '模型选择器使用以下模型；不修改则使用提供方默认目录', 'settings.modelFetch': '获取可用模型', 'settings.modelFetching': '获取中…',
+        'settings.modelFetchFailed': '获取模型失败：{msg}', 'settings.modelFetchEmpty': '提供方没有返回可用模型', 'settings.modelAdd': '添加模型', 'settings.modelId': '模型 ID', 'settings.modelIdRequired': '模型 ID 不能为空', 'settings.modelName': '名称（可选）', 'settings.modelRemove': '删除模型',
+        'settings.modelNoModels': '暂无自定义模型，当前使用提供方默认目录', 'settings.modelCandidates': '发现的模型', 'settings.modelSelectAll': '全选', 'settings.modelSelectNone': '取消全选', 'settings.modelAddSelected': '加入选中模型',
+        'settings.modelAdded': '已加入模型目录', 'settings.modelSaved': '模型配置已保存', 'settings.modelSaveFailed': '保存模型配置失败：{msg}', 'settings.modelOpenConfigFailed': '打开配置文件失败：{msg}', 'settings.modelOpenedConfig': '已请求打开 DSH 配置文件',
+        'settings.modelLive': '保存后立即生效', 'settings.modelRestart': '保存后需重启 DSH 才生效',
         'settings.servers': '服务器地址（可多个）', 'settings.speedTest': '测速', 'settings.add': '添加',
         'settings.scanTitle': '扫码连接', 'settings.scanDesc': '实时相机识别二维码，也可拍照/相册本地解码；无需谷歌服务', 'settings.scan': '扫码',
         'settings.notifyTitle': '通知', 'settings.notifyDesc': '收到审批/提问时推送', 'settings.announcementHistoryTitle': '历史公告', 'settings.announcementHistoryDesc': '查看以前收到的公告', 'settings.announcementHistory': '查看记录',
@@ -1005,7 +1042,7 @@
         'settings.resetTitle': '清空本地数据', 'settings.resetDesc': '令牌与缓存', 'settings.reset': '重置',
         'settings.confirmReset': '清除本地令牌、服务器与缓存？', 'settings.notifyDenied': '通知权限未开启',
         'settings.toolsShown': '已显示工具调用', 'settings.toolsHidden': '已隐藏工具调用',
-        'settings.about': 'DSH Remote · 局域网 / Tailscale 均可访问<br>仅作为 DSH 本机 3080 端口的带认证代理',
+        'settings.about': 'DSH for Android · 本地回环运行<br>连接内置 DSH Engine',
         'modal.approvalTitle': '工具审批', 'modal.reject': '拒绝', 'modal.allowOnce': '允许一次',
         'modal.questionTitle': 'DSH 需要你回答', 'modal.later': '稍后', 'modal.submit': '提交',
         'modal.goalTitle': '目标控制', 'modal.close': '关闭', 'modal.updateGoal': '更新目标',
@@ -1156,12 +1193,23 @@
         'scan.paired': 'Paired, connecting', 'scan.pairedLink': 'Paired via QR code', 'scan.notPair': 'Not a DSH Remote pairing QR code',
         'scan.cancelled': 'Scan cancelled', 'scan.failed': 'Scan failed: {msg}',
         'settings.groupGeneral': 'General', 'settings.groupGeneralDesc': 'Tool calls, prompt presets',
+        'settings.groupModel': 'Models', 'settings.groupModelDesc': 'Providers, API keys, and model catalogs',
         'settings.groupServers': 'Servers', 'settings.groupServersDesc': 'Server address, scan to pair',
         'settings.groupNotify': 'Notifications', 'settings.groupNotifyDesc': 'Notifications, reminders, background polling',
         'settings.groupTheme': 'Theme', 'settings.groupThemeDesc': 'Color themes',
         'settings.groupAbout': 'About', 'settings.groupAboutDesc': 'DSH status, updates',
         'settings.donate': 'Support', 'settings.donateDesc': 'If dsh-remote has been helpful to you, feel free to support development with a coffee ☕', 'settings.donateThanks': 'Thanks for your support ☕',
         'settings.back': '‹ Back',
+        'settings.modelTitle': 'Models', 'settings.modelIntro': 'Add a provider API key to use its models.', 'settings.modelRefresh': 'Refresh', 'settings.modelOpenConfig': 'Open config file',
+        'settings.modelLoading': 'Loading model configuration…', 'settings.modelUnavailable': 'Model configuration unavailable: {msg}', 'settings.modelEmpty': 'DSH did not declare any configurable providers', 'settings.modelReadOnly': 'Configuration is read-only',
+        'settings.modelConfigured': 'Configured', 'settings.modelMissing': 'Not configured', 'settings.modelEdit': 'Edit', 'settings.modelSave': 'Save', 'settings.modelSaving': 'Saving…', 'settings.modelCancel': 'Cancel',
+        'settings.modelApiKey': 'API key', 'settings.modelApiKeyPlaceholder': 'Enter an API key (blank keeps the current key)', 'settings.modelApiKeyStored': 'A key is stored; blank keeps it', 'settings.modelClearKey': 'Clear key',
+        'settings.modelBaseUrl': 'API URL', 'settings.modelBaseUrlPlaceholder': 'Provider default', 'settings.modelProtocol': 'Protocol', 'settings.modelDisplayName': 'Display name',
+        'settings.modelCatalog': 'Model catalog', 'settings.modelCatalogHint': 'The model picker uses this list; leave it unchanged to use the provider catalog', 'settings.modelFetch': 'Fetch available models', 'settings.modelFetching': 'Fetching…',
+        'settings.modelFetchFailed': 'Could not fetch models: {msg}', 'settings.modelFetchEmpty': 'The provider returned no models', 'settings.modelAdd': 'Add model', 'settings.modelId': 'Model ID', 'settings.modelIdRequired': 'Model ID cannot be empty', 'settings.modelName': 'Name (optional)', 'settings.modelRemove': 'Remove model',
+        'settings.modelNoModels': 'No custom models; using the provider default catalog', 'settings.modelCandidates': 'Discovered models', 'settings.modelSelectAll': 'Select all', 'settings.modelSelectNone': 'Clear selection', 'settings.modelAddSelected': 'Add selected models',
+        'settings.modelAdded': 'Models added to the catalog', 'settings.modelSaved': 'Model configuration saved', 'settings.modelSaveFailed': 'Could not save model configuration: {msg}', 'settings.modelOpenConfigFailed': 'Could not open config file: {msg}', 'settings.modelOpenedConfig': 'Requested DSH config file',
+        'settings.modelLive': 'Takes effect immediately', 'settings.modelRestart': 'Restart DSH to apply',
         'settings.servers': 'Servers (one or more)', 'settings.speedTest': 'Test', 'settings.add': 'Add',
         'settings.scanTitle': 'Scan to pair', 'settings.scanDesc': 'Use the live camera or photo/gallery QR decoding; no Google services required', 'settings.scan': 'Scan',
         'settings.notifyTitle': 'Notifications', 'settings.notifyDesc': 'Push on approvals / questions', 'settings.announcementHistoryTitle': 'Announcement history', 'settings.announcementHistoryDesc': 'Review announcements you received before', 'settings.announcementHistory': 'View history',
@@ -1217,7 +1265,7 @@
         'settings.resetTitle': 'Clear local data', 'settings.resetDesc': 'Token and caches', 'settings.reset': 'Reset',
         'settings.confirmReset': 'Clear local token, servers and caches?', 'settings.notifyDenied': 'Notification permission not granted',
         'settings.toolsShown': 'Tool calls shown', 'settings.toolsHidden': 'Tool calls hidden',
-        'settings.about': 'DSH Remote · accessible over LAN / Tailscale<br>Authenticated proxy in front of the local DSH 3080 endpoint',
+        'settings.about': 'DSH for Android · local loopback runtime<br>Connected to the embedded DSH Engine',
         'modal.approvalTitle': 'Tool approval', 'modal.reject': 'Reject', 'modal.allowOnce': 'Allow once',
         'modal.questionTitle': 'DSH needs your answer', 'modal.later': 'Later', 'modal.submit': 'Submit',
         'modal.goalTitle': 'Goal control', 'modal.close': 'Close', 'modal.updateGoal': 'Update goal',

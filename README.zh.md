@@ -44,6 +44,13 @@ DSH for Android UI（WebView）
 Engine 与 gateway 之间保留回环 HTTP/WebSocket，是为了复用现有 DSH 协议。由于运行范围是本机，
 远程服务器列表、Token 配对、网络轮询和公网公告/更新检查在本地模式中关闭，不属于 Android 本地运行时契约。
 
+### 模型配置
+
+进入 UI 的“设置 → 模型”即可管理 DSH 已声明的提供方。页面通过本地 gateway 调用 DSH 的
+`llm.providers`、`settings.describe` 和 `credentials.*` 接口，支持查看提供方、写入或清除 API 密钥、设置
+API 地址/协议、维护模型目录，以及通过 `llm.discoverModels` 获取可用模型。API 密钥是只写凭据：页面只显示“已配置”
+状态，不会把密钥写入 WebView 的 localStorage、URL 或 gateway 日志；配置的实时/重启生效范围沿用 DSH 返回的设置元数据。
+
 ### 默认最小运行时与可选组件
 
 当前 APK 内置 arm64 minimal 快照。默认 profile 只加载 DSH 启动所需的 shell、Web 兼容层、响应式 UI、默认模型
@@ -73,10 +80,12 @@ dsh-local-android/
 ├── gateway/
 │   ├── gateway.js                          # dsh-Remote gateway，本地模式
 │   ├── gateway-stats.cjs
-│   └── public/                             # dsh-Remote UI 快照
+│   └── public/                             # DSH for Android UI 快照
 ├── tests/
 │   ├── local-gateway.test.mjs
 │   ├── ui-local-mode.test.mjs
+│   ├── model-settings.test.mjs
+│   ├── app-identity.test.mjs
 │   └── minimal-profile.test.mjs
 ├── runtime/minimal/
 │   └── cordis.patch.yml                   # 默认最小 profile
