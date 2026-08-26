@@ -51,17 +51,22 @@ object LocalGatewayManager {
         env["DSH_REMOTE_FS_ROOT"] = engineManager.homeDir.absolutePath
         env["DSH_REMOTE_ANNOUNCEMENTS_URL"] = ""
         env["DSH_REMOTE_UPDATE_CHECK"] = "0"
-        process = ProcessBuilder(node.absolutePath, script.absolutePath)
-          .directory(dir)
-          .redirectErrorStream(true)
-          .redirectOutput(log)
-          .apply { environment().putAll(env) }
-          .start()
+        process = EmbeddedProcess.start(
+          listOf(node.absolutePath, script.absolutePath),
+          env,
+          log,
+        )
         LogCollector.log(TAG, "local gateway started on ${GatewayProbe.GATEWAY_URL}")
         true
       }
     } catch (t: Throwable) {
       Log.e(TAG, "local gateway start failed", t)
+      try {
+        logFile(context).appendText(
+          "[local-gateway] start FAILED: " + (t.message ?: t.javaClass.simpleName) + "\n",
+        )
+      } catch (_: Throwable) {
+      }
       LogCollector.log(TAG, "local gateway start FAILED: " + (t.message ?: t.javaClass.simpleName))
       false
     } finally {

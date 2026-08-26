@@ -549,19 +549,7 @@ class EngineManager(private val context: Context, private val pickToken: String?
    */
   private fun startWithArgs(args: Array<String>, env: Map<String, String>): Process {
     val log = File(context.filesDir, "engine.log")
-    fun build(argv: List<String>): ProcessBuilder =
-      ProcessBuilder(argv).also { b ->
-        b.environment().putAll(env)
-        b.redirectErrorStream(true)
-        b.redirectOutput(log)
-      }
-    return try {
-      build(args.toList()).start()
-    } catch (e: java.io.IOException) {
-      if (e.message?.contains("Permission denied") != true) throw e
-      Log.w(TAG, "direct exec denied, falling back to linker64: " + e.message)
-      build(listOf("/system/bin/linker64") + args.toList()).start()
-    }
+    return EmbeddedProcess.start(args.toList(), env, log)
   }
 
   /** Stop the engine process (best-effort). */

@@ -14,7 +14,7 @@ Install / detection screen
        └─ UI handoff (WebView)
 ```
 
-四层之间只通过明确的阶段契约传递状态。安装层不启动网络服务，Engine 层不管理 Gateway，Gateway 层不渲染 UI，UI 层不直接启动 DSH 进程。`BackendSupervisor` 只负责顺序、就绪等待和失败归因。
+四层之间只通过明确的阶段契约传递状态。安装层不启动网络服务，Engine 层不管理 Gateway，Gateway 层不渲染 UI，UI 层不直接启动 DSH 进程。`BackendSupervisor` 只负责顺序、就绪等待和失败归因。两个后台进程共用 `EmbeddedProcess` 的启动基础设施，但不互相调用管理器。
 
 第一阶段保留 HTTP/WebSocket 作为 WebView 与 gateway 的进程间通信方式。它们只在 Android 回环接口上传输，不承担远程访问职责，因此可以移除远程连接相关的复杂度，而不必立即重写前端协议。
 

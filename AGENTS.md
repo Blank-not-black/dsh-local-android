@@ -104,6 +104,7 @@ cd ..\plugins\dsh-android-<pkg> && npm run build
 | **EngineService.kt** | 前台服务 + 看门狗 | watchdog 5s 探活 + UndoGate 触发 + 唤醒锁续期/释放 + onTaskRemoved 清理（F5 生命礼仪） |
 | **MainActivity.kt** | 主界面/桥接线/意图处理 | `maybeProcessIncoming`（VIEW/SEND→FileIncoming→POST /api/android/file-incoming）；AndroidBridge 接线含 `onSetAdbPair={code,pairPort,connectPort->AdbState.pairWithCode}`；`onRevokeAdbPair`、`onAdbShell` |
 | **BackendSupervisor.kt** | 四层启动协调 | 只按 INSTALL → ENGINE → GATEWAY → UI 顺序推进；通过 `InstallBackend`、`EngineBackend`、`GatewayBackend` 契约归因失败，不渲染 UI、不直接读取控件 |
+| **EmbeddedProcess.kt** | 嵌入式运行时进程启动基础设施 | DSH Engine 和 Local Gateway 共用 direct exec → `/system/bin/linker64` 回退，避免 Android app-private ELF 执行策略造成不同层行为不一致 |
 | **GatewayProbe.kt** | 本地 gateway 探活 | GET `http://127.0.0.1:8787/health?probe=live`，作为 WebView 显示和启动流程的第二个就绪条件 |
 | **LocalGatewayManager.kt** | 本地 gateway 部署与进程生命周期 | 从 Gradle asset source 部署 `gateway.js`、`gateway-stats.cjs`、`public/` 到 `filesDir/dsh-local-gateway/`；以嵌入式 Node 启动，固定 `HOST=127.0.0.1`、`PORT=8787`、`DSH_UPSTREAM=127.0.0.1:3080` |
 | **AndroidBridge.kt** | `window.androidBridge` 协议 v1 | `setAdbPair(code,pairPort,connectPort):Boolean`（**3 参**）、`getAdbState()`、`adbShell(cmd)`、`requestAllFilesAccess/hasAllFilesAccess`、`pickToken` 鉴权、`openNativePath`（FileProvider 白名单） |
